@@ -9,7 +9,23 @@ from model.collection import Collection, CollectionItem
 from schemas.collection import CollectionCreate
 
 
-# ---- Armário (looks salvos) ----
+# ---- Guarda-roupa (gesto deliberado de salvar) ----
+
+async def save_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
+    exists = await db.execute(select(Look.id).where(Look.id == look_id))
+    if not exists.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
+        )
+    db.add(SavedLook(user_id=user_id, look_id=look_id))
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Look já está no armário"
+        )
+
 
 async def list_saved_looks(db: AsyncSession, user_id: UUID) -> list[Look]:
     query = (
@@ -69,9 +85,16 @@ async def list_collections(db: AsyncSession, user_id: UUID) -> list[Collection]:
 async def create_collection(
     db: AsyncSession, user_id: UUID, dados: CollectionCreate
 ) -> Collection:
-    collection = Collection(user_id=user_id, name=dados.name)
+    collection = Collection(user_id=user_id, **dados.model_dump())
     db.add(collection)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Você já tem uma coleção com esse nome",
+        )
     await db.refresh(collection)
     return collection
 
@@ -95,7 +118,7 @@ async def add_look_to_collection(
 ) -> None:
     await _get_owned_collection(db, user_id, collection_id)
 
-    look = await db.execute(select(Look).where(Look.id == look_id))
+    look = await db.execute(select(Look.id).where(Look.id == look_id))
     if not look.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
@@ -107,8 +130,7 @@ async def add_look_to_collection(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Look já está nesta coleção",
+            status_code=status.HTTP_409_CONFLICT, detail="Look já está nesta coleção"
         )
 
 

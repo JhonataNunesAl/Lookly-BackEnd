@@ -1,16 +1,20 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, status
+from datetime import datetime
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import get_db
-from dependencies.auth import get_current_user_id
-from schemas.look import LookCreate, LookUpdate, LookResponse
+from dependencies.auth import get_current_user_id, get_current_user_id_optional
+from schemas.look import LookCreate, LookUpdate, LookResponse, FeedResponse
 from service import look_service
+from core.rate_limiter import limiter
 
 router = APIRouter(prefix="/looks", tags=["Looks"])
 
 
 @router.post("", response_model=LookResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def criar_look(
+    request: Request,
     dados: LookCreate,
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
@@ -18,9 +22,28 @@ async def criar_look(
     return await look_service.create_look(db, user_id, dados)
 
 
+# Precisa vir ANTES de `/{look_id}` — senão "search" seria capturado como
+# valor de `look_id` (a rota genérica casa primeiro, na ordem de registro).
+@router.get("/search", response_model=FeedResponse)
+@limiter.limit("30/minute")
+async def buscar_looks(
+    request: Request,
+    q: str | None = Query(None, min_length=1, description="texto no nome/descrição"),
+    category: str | None = Query(None, description="slug da categoria (opcional)"),
+    limit: int = Query(20, ge=1, le=50),
+    cursor: datetime | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await look_service.search_looks(db, q, category, limit, cursor)
+
+
 @router.get("/{look_id}", response_model=LookResponse)
-async def get_look(look_id: UUID, db: AsyncSession = Depends(get_db)):
-    return await look_service.get_look(db, look_id)
+async def get_look(
+    look_id: UUID,
+    user_id: UUID | None = Depends(get_current_user_id_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    return await look_service.get_look(db, look_id, user_id)
 
 
 @router.put("/{look_id}", response_model=LookResponse)
@@ -43,5 +66,9 @@ async def deletar_look(
 
 
 @router.get("/{look_id}/share")
-async def compartilhar_look(look_id: UUID, db: AsyncSession = Depends(get_db)):
-    return await look_service.get_share_payload(db, look_id)
+async def compartilhar_look(
+    look_id: UUID,
+    user_id: UUID | None = Depends(get_current_user_id_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    return await look_service.get_share_payload(db, look_id, user_id)

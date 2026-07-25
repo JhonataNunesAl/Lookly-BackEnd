@@ -61,21 +61,21 @@ diretamente.
 │   └── auth.py             # get_current_user_id (dependência de auth)
 ├── model/                  # tabelas SQLAlchemy
 │   ├── base.py
-│   ├── profile.py  seller.py  category.py
-│   ├── look.py  swipe.py  saved_look.py  collection.py
+│   ├── profile.py  body_profile.py  seller.py  category.py
+│   ├── look.py  signal.py (look_likes/look_views)  saved_look.py
+│   ├── collection.py  report.py
 ├── schemas/                # modelos Pydantic (entrada/saída + validações)
-│   ├── profile.py  seller.py  category.py
-│   ├── look.py  swipe.py  collection.py
+│   ├── profile.py  body_profile.py  seller.py  category.py
+│   ├── look.py  swipe.py  collection.py  report.py
 ├── controller/             # rotas por domínio
-│   ├── profile_controller.py  seller_controller.py
-│   ├── category_controller.py  look_controller.py
+│   ├── profile_controller.py  body_profile_controller.py
+│   ├── seller_controller.py  category_controller.py  look_controller.py
 │   ├── feed_controller.py  swipe_controller.py
-│   └── wardrobe_controller.py
+│   ├── wardrobe_controller.py  report_controller.py
 └── service/                # lógica de negócio por domínio
-    ├── profile_service.py  seller_service.py
-    ├── category_service.py  look_service.py
-    ├── feed_service.py  swipe_service.py
-    └── wardrobe_service.py
+    ├── profile_service.py  body_profile_service.py  seller_service.py
+    ├── category_service.py  look_service.py  feed_service.py
+    ├── swipe_service.py  wardrobe_service.py  report_service.py
 ```
 
 ---
@@ -100,17 +100,26 @@ Requisições sem token, ou com token inválido/expirado, recebem **401**.
 Todos sob o prefixo `/api`. 🔒 = exige token.
 
 ### Perfil
-| Método | Rota                  | Descrição                                 |
-|--------|-----------------------|-------------------------------------------|
-| GET 🔒 | `/profiles/me`        | Retorna o perfil do usuário logado        |
-| PUT 🔒 | `/profiles/me`        | Atualiza nome, foto, medidas, estilos…    |
+| Método | Rota                  | Descrição                                                        |
+|--------|-----------------------|------------------------------------------------------------------|
+| GET 🔒 | `/profiles/me`        | Perfil do usuário + papel real (`is_seller`, `seller_id`)        |
+| PUT 🔒 | `/profiles/me`        | Atualiza username, nome, foto, bio, `birth_date` (18+)           |
+
+### Dados corporais (sensíveis — só o dono)
+| Método  | Rota                      | Descrição                                                    |
+|---------|---------------------------|--------------------------------------------------------------|
+| GET 🔒  | `/body-profile/me`        | Medidas (ciphertext) e chave da foto de corpo                |
+| PUT 🔒  | `/body-profile/me`        | Grava medidas (já cifradas) e `body_photo_key`               |
+| POST 🔒 | `/body-profile/me/consent`| Concede consentimento de IA (LGPD, versionado)               |
+| DELETE🔒| `/body-profile/me/consent`| Revoga o consentimento                                       |
 
 ### Vendedores (lojas/marcas que postam looks)
-| Método | Rota             | Descrição                          |
-|--------|------------------|------------------------------------|
-| POST 🔒| `/sellers`       | Torna o usuário um vendedor        |
-| GET 🔒 | `/sellers/me`    | Dados da própria loja              |
-| PUT 🔒 | `/sellers/me`    | Atualiza a loja                    |
+| Método | Rota                    | Descrição                                          |
+|--------|-------------------------|----------------------------------------------------|
+| POST 🔒| `/sellers`              | Cria a loja do usuário (`owner_profile_id`)        |
+| GET 🔒 | `/sellers/me`           | Dados da própria loja                              |
+| PUT 🔒 | `/sellers/me`           | Atualiza a loja                                    |
+| PUT 🔒 | `/sellers/me/document`  | Documento fiscal (ciphertext + hash) em `sellers_private` |
 
 ### Categorias
 | Método | Rota           | Descrição                       |
@@ -128,25 +137,32 @@ Todos sob o prefixo `/api`. 🔒 = exige token.
 | GET    | `/looks/{id}/share`   | Payload de compartilhamento (link/WhatsApp)          |
 
 ### Feed (funcionalidade central)
-| Método | Rota                                       | Descrição                                                              |
-|--------|--------------------------------------------|------------------------------------------------------------------------|
-| GET 🔒 | `/feed?category=<slug>&limit=&cursor=`     | Looks da categoria que o usuário **ainda não** deu swipe (paginado)    |
+| Método | Rota                                       | Descrição                                                                     |
+|--------|--------------------------------------------|-------------------------------------------------------------------------------|
+| GET 🔒 | `/feed?category=<slug>&limit=&cursor=`     | Looks ativos que o usuário **ainda não** viu (paginado). `category` é **opcional** |
 
 ### Swipe
-| Método | Rota       | Descrição                                                                 |
-|--------|------------|---------------------------------------------------------------------------|
-| POST 🔒| `/swipes`  | Registra swipe. `RIGHT` curte e salva no armário; `LEFT` descarta         |
+| Método | Rota       | Descrição                                                                          |
+|--------|------------|------------------------------------------------------------------------------------|
+| POST 🔒| `/swipes`  | Registra swipe (`look_views`). `RIGHT` curte (`look_likes`); **não** salva no armário |
 
 ### Armário e coleções
-| Método  | Rota                                                | Descrição                          |
-|---------|-----------------------------------------------------|------------------------------------|
-| GET 🔒  | `/saved-looks`                                      | Looks curtidos/salvos              |
-| DELETE🔒| `/saved-looks/{look_id}`                            | Remove do armário                  |
-| GET 🔒  | `/collections`                                      | Lista coleções (pastas)            |
-| POST 🔒 | `/collections`                                      | Cria coleção                       |
-| GET 🔒  | `/collections/{id}/looks`                           | Looks de uma coleção               |
-| POST 🔒 | `/collections/{id}/looks`                           | Adiciona look à coleção            |
-| DELETE🔒| `/collections/{id}/looks/{look_id}`                 | Remove look da coleção             |
+| Método  | Rota                                                | Descrição                                       |
+|---------|-----------------------------------------------------|-------------------------------------------------|
+| POST 🔒 | `/saved-looks`                                      | Salva um look (gesto deliberado, `{look_id}`)   |
+| GET 🔒  | `/saved-looks`                                      | Lista o armário                                 |
+| DELETE🔒| `/saved-looks/{look_id}`                            | Remove do armário                               |
+| GET 🔒  | `/collections`                                      | Lista coleções (pastas)                         |
+| POST 🔒 | `/collections`                                      | Cria coleção                                    |
+| GET 🔒  | `/collections/{id}/looks`                           | Looks de uma coleção                            |
+| POST 🔒 | `/collections/{id}/looks`                           | Adiciona look à coleção                         |
+| DELETE🔒| `/collections/{id}/looks/{look_id}`                 | Remove look da coleção                          |
+
+### Denúncias (moderação)
+| Método | Rota        | Descrição                                          |
+|--------|-------------|----------------------------------------------------|
+| POST 🔒| `/reports`  | Denuncia um perfil, loja ou look                   |
+| GET 🔒 | `/reports`  | Lista as próprias denúncias                        |
 
 A documentação interativa (Swagger) fica em **`/docs`** com a API rodando.
 
@@ -156,9 +172,12 @@ A documentação interativa (Swagger) fica em **`/docs`** com a API rodando.
 
 - Um **look** precisa pertencer a uma categoria e ter **de 1 a 6 fotos** e **no máximo 2 vídeos**
   ([`schemas/look.py`](schemas/look.py)).
-- **Swipe**: `direction` é o enum `RIGHT`/`LEFT` ([`schemas/swipe.py`](schemas/swipe.py)).
-  `RIGHT` = curtir/salvar. Há trava de unicidade: um usuário só dá swipe uma vez por look.
-- Só **vendedores** criam looks; um look só é editado/removido pelo seu criador.
+- **Curtir ≠ salvar.** `RIGHT` registra uma curtida (sinal barato e frequente); salvar no armário é
+  um gesto **separado e deliberato** (`POST /saved-looks`) que preserva o sinal de intenção de compra.
+- **Idade**: 18+, derivada de `birth_date` — nunca guardada como número.
+- **Papel vem do servidor**: `is_seller`/`seller_id` são resolvidos em `/profiles/me`; a escolha de
+  tela no cliente não autoriza nada.
+- Só quem tem loja cria looks; editar/remover exige gerenciar a loja (`can_manage_store`).
 
 ---
 
@@ -168,8 +187,11 @@ O esquema é definido em [`schema.sql`](schema.sql) e deve ser executado no **SQ
 Supabase**. A API **não** cria tabelas automaticamente — o `schema.sql` é a fonte de verdade
 (precisa de `auth.users`, extensão UUID e das políticas RLS).
 
-Tabelas principais: `profiles`, `sellers`, `categories`, `looks`, `swipes`, `saved_looks`
-(as coleções usam `collections` e `collection_items`).
+Tabelas: `profiles`, `body_profiles`, `sellers`, `sellers_private`, `store_members`,
+`categories`, `looks`, `look_likes`, `look_views` (particionada por mês), `saved_looks`,
+`collections`, `collection_items`, `reports`. Dados sensíveis (medidas, documento fiscal) ficam em
+tabelas próprias com RLS restrita ao dono; toda policy é escrita como se fosse o único controle,
+pois a anon key é pública. `look_views` precisa de partições futuras (via `pg_cron`).
 
 ---
 
@@ -213,8 +235,12 @@ curl -H "Authorization: Bearer <jwt>" http://localhost:8000/api/profiles/me
 
 ## Roadmap (ainda não implementado)
 
-- **Provador Virtual com IA**: mesclar a foto do look com `full_body_photo_url` + `body_measurements`.
-- **Recomendação/ML**: calibrar o feed pelos estilos preferidos do usuário.
+- **Provador Virtual com IA**: mesclar a foto do look com os dados de `body_profiles` (checando o
+  consentimento LGPD no momento da leitura).
+- **Cifragem real** dos campos `*_enc` (envelope encryption com KMS) — hoje a API só persiste o
+  ciphertext que o cliente envia.
+- **Camada de comércio**: pedidos, pagamentos (Mercado Pago), variantes com estoque, reviews.
+- **Ranqueamento do feed**: capturar sinal (dwell time, completion) em `look_views` e ranquear.
 - **Chat interno** para enviar look a um amigo.
-- **Moderação de conteúdo** (denúncias) e **exclusão de conta** (LGPD).
-- **Storage/CDN** para fotos e vídeos.
+- **Exclusão de conta** (LGPD) com limpeza explícita de `look_views` (sem FK).
+- **Storage/CDN** e signed URLs para a foto de corpo (bucket privado).

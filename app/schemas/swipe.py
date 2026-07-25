@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class SwipeDirection(str, Enum):
-    RIGHT = "RIGHT"  # curtir/salvar
+    RIGHT = "RIGHT"  # curtir (NÃO salva no armário — save é gesto separado)
     LEFT = "LEFT"  # descartar
 
 
@@ -14,10 +14,6 @@ class SwipeCreate(BaseModel):
 
 
 class SwipeResponse(BaseModel):
-    id: UUID
     look_id: UUID
     direction: SwipeDirection
-    saved: bool = False  # True quando o swipe RIGHT também salvou no armário
-
-    class Config:
-        from_attributes = True
+    liked: bool = False  # True quando o RIGHT registrou uma curtida

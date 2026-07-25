@@ -1,11 +1,12 @@
 from uuid import UUID
+from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
 from schemas.look import LookCreate, LookUpdate
-from service.seller_service import get_seller_or_none
+from service import seller_service
 
 
 async def _get_look(db: AsyncSession, look_id: UUID) -> Look:
@@ -18,37 +19,95 @@ async def _get_look(db: AsyncSession, look_id: UUID) -> Look:
     return look
 
 
-async def get_look(db: AsyncSession, look_id: UUID) -> Look:
-    return await _get_look(db, look_id)
-
-
-async def create_look(db: AsyncSession, user_id: UUID, dados: LookCreate) -> Look:
-    # Apenas vendedores postam looks.
-    if not await get_seller_or_none(db, user_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas vendedores podem criar looks",
-        )
-
-    # Categoria precisa existir.
-    cat = await db.execute(select(Category).where(Category.id == dados.category_id))
+async def _validar_categoria(db: AsyncSession, category_id: UUID) -> None:
+    cat = await db.execute(select(Category).where(Category.id == category_id))
     if not cat.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria inexistente"
         )
 
-    look = Look(creator_id=user_id, **dados.model_dump())
+
+async def _assert_visible(db: AsyncSession, look: Look, user_id: UUID | None) -> None:
+    """Looks fora de `active` (draft/under_review/removed) só são visíveis para
+    quem gerencia a loja dona do look. Sem isso, o feed filtra por status mas
+    o acesso direto por ID (e o link de compartilhamento) expunha qualquer
+    conteúdo em moderação para quem tivesse ou adivinhasse o UUID.
+    """
+    if look.status == "active":
+        return
+    if user_id is not None and await seller_service.can_manage_store(
+        db, user_id, look.seller_id
+    ):
+        return
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado")
+
+
+async def get_look(db: AsyncSession, look_id: UUID, user_id: UUID | None = None) -> Look:
+    look = await _get_look(db, look_id)
+    await _assert_visible(db, look, user_id)
+    return look
+
+
+async def search_looks(
+    db: AsyncSession,
+    q: str | None,
+    category_slug: str | None,
+    limit: int,
+    cursor: datetime | None,
+    seller_id: UUID | None = None,
+) -> dict:
+    """Busca por texto em looks ativos — deliberadamente SEM a exclusão de
+    "já visto" do feed: procurar precisa achar algo que a pessoa já swipou.
+    `seller_id` reaproveita esta mesma função para `GET /sellers/{id}/looks`
+    (o catálogo público de uma loja é só esta busca sem termo, filtrada por dona).
+    """
+    query = select(Look).where(Look.status == "active")
+
+    if q:
+        termo = f"%{q}%"
+        query = query.where(
+            Look.name.ilike(termo) | Look.description.ilike(termo)
+        )
+    if category_slug:
+        query = query.join(Category, Look.category_id == Category.id).where(
+            Category.slug == category_slug
+        )
+    if seller_id is not None:
+        query = query.where(Look.seller_id == seller_id)
+    if cursor is not None:
+        query = query.where(Look.created_at < cursor)
+
+    query = query.order_by(Look.created_at.desc()).limit(limit)
+
+    result = await db.execute(query)
+    looks = list(result.scalars().all())
+    next_cursor = looks[-1].created_at.isoformat() if len(looks) == limit else None
+    return {"items": looks, "next_cursor": next_cursor}
+
+
+async def create_look(db: AsyncSession, user_id: UUID, dados: LookCreate) -> Look:
+    # Só quem tem loja publica looks; o look pertence à loja (seller_id).
+    seller = await seller_service.get_seller_by_owner(db, user_id)
+    if not seller:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas vendedores podem criar looks",
+        )
+    await _validar_categoria(db, dados.category_id)
+
+    look = Look(seller_id=seller.id, **dados.model_dump())
     db.add(look)
     await db.commit()
     await db.refresh(look)
     return look
 
 
-async def _get_owned_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> Look:
+async def _get_manageable_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> Look:
     look = await _get_look(db, look_id)
-    if look.creator_id != user_id:
+    if not await seller_service.can_manage_store(db, user_id, look.seller_id):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Este look não é seu"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Você não gerencia a loja deste look",
         )
     return look
 
@@ -56,18 +115,11 @@ async def _get_owned_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> Loo
 async def update_look(
     db: AsyncSession, user_id: UUID, look_id: UUID, dados: LookUpdate
 ) -> Look:
-    look = await _get_owned_look(db, user_id, look_id)
+    look = await _get_manageable_look(db, user_id, look_id)
 
     payload = dados.model_dump(exclude_unset=True)
     if "category_id" in payload:
-        cat = await db.execute(
-            select(Category).where(Category.id == payload["category_id"])
-        )
-        if not cat.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria inexistente"
-            )
-
+        await _validar_categoria(db, payload["category_id"])
     for campo, valor in payload.items():
         setattr(look, campo, valor)
     await db.commit()
@@ -76,16 +128,17 @@ async def update_look(
 
 
 async def delete_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
-    look = await _get_owned_look(db, user_id, look_id)
+    look = await _get_manageable_look(db, user_id, look_id)
     await db.delete(look)
     await db.commit()
 
 
-async def get_share_payload(db: AsyncSession, look_id: UUID) -> dict:
-    """Monta o payload de compartilhamento externo (WhatsApp/Instagram)."""
+async def get_share_payload(db: AsyncSession, look_id: UUID, user_id: UUID | None = None) -> dict:
+    """Payload de compartilhamento externo (WhatsApp/Instagram)."""
     look = await _get_look(db, look_id)
-    deep_link = f"lucker://looks/{look.id}"
-    texto = "Olha esse look que achei no Lucker!"
+    await _assert_visible(db, look, user_id)
+    deep_link = f"lookly://looks/{look.id}"
+    texto = "Olha esse look que achei no Lookly!"
     return {
         "look_id": str(look.id),
         "deep_link": deep_link,

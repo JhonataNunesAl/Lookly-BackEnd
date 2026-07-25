@@ -4,29 +4,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
-from model.swipe import Swipe
+from model.signal import LookView
 
 
 async def get_feed(
     db: AsyncSession,
     user_id: UUID,
-    category_slug: str,
+    category_slug: str | None = None,
     limit: int = 20,
     cursor: datetime | None = None,
 ) -> dict:
-    """Feed core: looks de uma categoria que o usuário ainda não deu swipe.
+    """Feed: looks ativos que o usuário ainda não viu.
 
-    Filtro rígido por categoria e paginação por cursor (created_at desc).
+    O filtro de categoria é OPCIONAL — sem ele, o feed abre espaço para
+    ranqueamento futuro em vez de ser uma lista cronológica filtrada.
     """
-    swiped_subq = select(Swipe.look_id).where(Swipe.user_id == user_id)
+    seen_subq = select(LookView.look_id).where(LookView.user_id == user_id)
 
     query = (
         select(Look)
-        .join(Category, Look.category_id == Category.id)
-        .where(Category.slug == category_slug)
-        .where(~Look.id.in_(swiped_subq))
+        .where(Look.status == "active")
+        .where(~Look.id.in_(seen_subq))
         .order_by(Look.created_at.desc())
     )
+
+    if category_slug:
+        query = query.join(Category, Look.category_id == Category.id).where(
+            Category.slug == category_slug
+        )
     if cursor is not None:
         query = query.where(Look.created_at < cursor)
 

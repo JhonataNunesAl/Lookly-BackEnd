@@ -8,26 +8,28 @@ from fastapi.responses import JSONResponse
 from routers import router
 from core.rate_limiter import limiter
 
-app = FastAPI(title="Lucker API")
+app = FastAPI(title="Lookly API")
 
 # Rate Limit
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc):
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Rate limit excedido"}
-    )
+    return JSONResponse(status_code=429, content={"detail": "Rate limit excedido"})
 
-# CORS — origens permitidas via env (CORS_ORIGINS, separadas por vírgula).
-# Default restrito ao ambiente local de desenvolvimento.
-_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8081")
+
+# CORS — só afeta navegador (Expo Web). O app NATIVO no celular não manda
+# Origin e ignora CORS. Config via env CORS_ORIGINS (separadas por vírgula);
+# "*" libera qualquer origem (útil em dev). Com "*", allow_credentials precisa
+# ser False, senão o próprio spec de CORS invalida o wildcard.
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+_allow_all = _origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _origins.split(",") if o.strip()],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,10 +37,13 @@ app.add_middleware(
 # Rotas
 app.include_router(router, prefix="/api")
 
+
 @app.get("/")
 async def root():
     return {"status": "API rodando 🚀"}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

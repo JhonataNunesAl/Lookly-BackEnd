@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import get_db
 from dependencies.auth import get_current_user_id
@@ -10,11 +10,24 @@ from schemas.collection import (
     CollectionResponse,
 )
 from service import wardrobe_service
+from core.rate_limiter import limiter
 
 router = APIRouter(tags=["Armário"])
 
 
 # ---- Looks salvos ----
+
+@router.post("/saved-looks", status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute")
+async def salvar_look(
+    request: Request,
+    dados: CollectionItemAdd,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await wardrobe_service.save_look(db, user_id, dados.look_id)
+    return {"status": "salvo"}
+
 
 @router.get("/saved-looks", response_model=list[LookResponse])
 async def listar_armario(
