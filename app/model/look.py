@@ -1,8 +1,8 @@
 import uuid
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
-from model.base import Base
-from model.enums import content_status
+from .base import Base
+from .enums import content_status
 
 
 class Look(Base):

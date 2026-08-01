@@ -1,6 +1,6 @@
 from sqlalchemy import Column, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
+from .base import Base
 
 
 class SavedLook(Base):

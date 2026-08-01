@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
+from .base import Base
 
 
 class BodyProfile(Base):

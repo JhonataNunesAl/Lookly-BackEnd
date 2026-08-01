@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Date, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
-from model.enums import account_status
+from .base import Base
+from .enums import account_status
 
 
 class Profile(Base):

@@ -1,8 +1,8 @@
 import uuid
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from model.base import Base
-from model.enums import content_status, store_role
+from .base import Base
+from .enums import content_status, store_role
 
 
 class Seller(Base):

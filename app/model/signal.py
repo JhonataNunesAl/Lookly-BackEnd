@@ -1,7 +1,7 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
-from model.enums import swipe_direction
+from .base import Base
+from .enums import swipe_direction
 
 
 class LookLike(Base):

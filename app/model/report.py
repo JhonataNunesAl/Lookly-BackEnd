@@ -1,8 +1,8 @@
 import uuid
 from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
-from model.enums import report_target, report_status
+from .base import Base
+from .enums import report_target, report_status
 
 
 class Report(Base):

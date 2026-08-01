@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
-from model.base import Base
+from .base import Base
 
 
 class Category(Base):
