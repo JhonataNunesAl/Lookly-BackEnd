@@ -1,5 +1,6 @@
 import uuid
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, func
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from .base import Base
 from .enums import content_status
@@ -33,3 +34,7 @@ class Look(Base):
     status = Column(content_status(), nullable=False, server_default="active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    cart_items = relationship(
+    "CartItems",
+    back_populates="look"
+)
