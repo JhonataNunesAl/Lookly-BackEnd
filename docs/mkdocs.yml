@@ -1,1 +1,6 @@
 site_name: My Docs
+
+nav:
+  - Home: index.md
+  - Carrinho:
+      - Cart e CartItems: cart.md

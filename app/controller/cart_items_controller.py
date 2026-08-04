@@ -28,7 +28,8 @@ async def add_look_cart(dados: CartItemsAdd, db: AsyncSession = Depends(get_db))
 
     new_look_in_cart = CartItems(
         cart_id = dados.cart_id,
-        look_id = dados.look_id
+        look_id = dados.look_id,
+        quantity = dados.quantity
     )
 
     db.add(new_look_in_cart)
