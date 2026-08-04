@@ -38,3 +38,7 @@ class Look(Base):
     "CartItems",
     back_populates="look"
 )
+    order_items = relationship(
+        "OrderItems",
+        back_populates="look"
+    )

@@ -10,11 +10,15 @@ from .saved_look import SavedLook
 from .seller import Seller, SellerPrivate, StoreMember
 from .signal import UserCategoryAffinity, LookView, LookLike
 from .cart_items import CartItems
+from .orders import Order
+from .orders_items import OrderItems
+from .address import Address
 
 
 __all__ = [
     "Base",
     "BodyProfile",
+    "Address",
     "Cart",
     "CartItems",
     "Category",
@@ -23,6 +27,8 @@ __all__ = [
     "Look",
     "Profile",
     "Report",
+    "Order",
+    "OrderItems",
     "SavedLook",
     "Seller",
     "SellerPrivate",
