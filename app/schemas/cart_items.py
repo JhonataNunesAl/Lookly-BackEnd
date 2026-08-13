@@ -17,7 +17,7 @@ class LookResponse(BaseModel):
 class CartItemsAdd(BaseModel):
     cart_id: UUID
     look_id: UUID
-    quantity: int
+    quantity: int = 1
 
 
 class CartItemsAddQuantity(BaseModel):
