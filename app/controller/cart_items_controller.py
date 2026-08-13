@@ -3,6 +3,8 @@ from db.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from model.cart_items import CartItems
 from model.cart import Cart
+from model.look import Look
+from dependencies.auth import get_current_user_id
 from uuid import UUID
 from sqlalchemy.orm import joinedload
 from decimal import Decimal
@@ -19,12 +21,23 @@ router = APIRouter(prefix='/cart-items', tags=['Carts_Items'])
              response_model=CartItemsResponse,
              summary="Adiciona um look no carrinho")
 async def add_look_cart(dados: CartItemsAdd, db: AsyncSession = Depends(get_db)):
+    
+    cart = await db.scalar(select(Cart).where(Cart.id == dados.cart_id))
+    look = await db.scalar(select(Look).where(Look.id == dados.look_id))
+
+    if not cart:
+        raise HTTPException(detail="Cart not found",
+                            status_code=status.HTTP_404_NOT_FOUND)
+
+    if not look:
+        raise HTTPException(detail="Look not found",
+                            status_code=status.HTTP_404_NOT_FOUND)
 
     look_in_cart = await db.scalar(select(CartItems).where(CartItems.look_id == dados.look_id))
 
     if look_in_cart:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail = 'Look already exists in Cart of User')
+        raise HTTPException(detail = 'Look already exists in Cart of User',
+                            status_code=status.HTTP_400_BAD_REQUEST)
 
     new_look_in_cart = CartItems(
         cart_id = dados.cart_id,
@@ -39,20 +52,20 @@ async def add_look_cart(dados: CartItemsAdd, db: AsyncSession = Depends(get_db))
 
 
 @router.get(
-    path='/{user_id}/',
+    path='/user/',
     status_code=status.HTTP_200_OK,
     response_model=ListCartItemResponse,
     summary="Retorna todos os looks que estão no carrinho de um usuário específico"
 )
-async def get_looks_user(user_id: str, db: AsyncSession = Depends(get_db)):
+async def get_looks_user(user_id: UUID = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
     cart_user = await db.scalar(
         select(Cart).where(Cart.user_id == user_id)
     )
 
-    if cart_user is None:
+    if not cart_user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Carrinho não encontrado."
+            detail="Cart not found",
+            status_code=status.HTTP_404_NOT_FOUND
         )
 
     result = await db.scalars(
@@ -77,13 +90,22 @@ async def get_looks_user(user_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.delete(path='/',
+@router.delete(path='/user/',
                status_code=status.HTTP_204_NO_CONTENT,
                summary="Exclui um look do carrinho de um usuario especifico")
-async def delete_look_cart_user(dados:DeleteLookCartItemUser, db: AsyncSession = Depends(get_db)):
-    cart_user = await db.scalar(select(Cart).where(Cart.user_id == dados.user_id))
+async def delete_look_cart_user(dados:DeleteLookCartItemUser, user_id: UUID = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
+
+    cart_user = await db.scalar(select(Cart).where(Cart.user_id == user_id))
+
+    if not cart_user:
+        raise HTTPException(detail= "Cart not found",
+                            status_code= status.HTTP_404_NOT_FOUND)
     
     look = await db.scalar(select(CartItems).where(CartItems.look_id == dados.look_id and CartItems.cart_id == cart_user.id))
+
+    if not look:
+        raise HTTPException(detail= "Look not found", 
+                            status_code= status.HTTP_404_NOT_FOUND)
 
     await db.delete(look)
     await db.commit()
@@ -93,21 +115,23 @@ async def delete_look_cart_user(dados:DeleteLookCartItemUser, db: AsyncSession =
              status_code= status.HTTP_200_OK,
              response_model=CartItemsResponse,
              summary="Diminui a quantidade de um look especifico no carrinho")
-async def delete_one_look_cart(look_id:UUID, dados: CartItemsDelete, db: AsyncSession = Depends(get_db)):
+async def delete_one_look_cart(look_id:UUID, dados: CartItemsDelete, user_id: UUID = Depends(get_current_user_id), db:AsyncSession = Depends(get_db)):
+
     cart_user = await db.scalar(select(Cart).where(Cart.id == dados.cart_id))
     if cart_user == None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail = "Cart User not found")
+        raise HTTPException(detail = "Cart User not found",
+                            status_code=status.HTTP_404_NOT_FOUND)
+    
     look = await db.scalar(select(CartItems).where((CartItems.cart_id == cart_user.id) & (CartItems.look_id == look_id)))
 
     if look == None:
-        raise HTTPException(status_code= status.HTTP_404_NOT_FOUND,
-                            detail = "Look not found in Cart of user")
+        raise HTTPException(detail = "Look not found in Cart of user",
+                            status_code= status.HTTP_404_NOT_FOUND)
 
 
     if dados.quantity > look.quantity:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="The quantity sent for removal cannot be greater than the current quantity.")
+        raise HTTPException(detail="The quantity sent for removal cannot be greater than the current quantity.",
+                            status_code=status.HTTP_400_BAD_REQUEST)
 
     look.quantity -= dados.quantity
 
@@ -115,8 +139,8 @@ async def delete_one_look_cart(look_id:UUID, dados: CartItemsDelete, db: AsyncSe
         await db.delete(look)
         await db.commit()
         raise HTTPException(
-        status_code=status.HTTP_200_OK,
-        detail="The quantity of the item look is equal to zero. We removed it from the cart."
+        detail="The quantity of the item look is equal to zero. We removed it from the cart.",
+        status_code=status.HTTP_200_OK
         )
     
     await db.commit()
@@ -127,7 +151,8 @@ async def delete_one_look_cart(look_id:UUID, dados: CartItemsDelete, db: AsyncSe
              status_code= status.HTTP_200_OK,
              response_model=CartItemsResponse,
              summary="Aumenta a quantidade de um look especifico no carrinho")
-async def add_one_more_look_cart(look_id:UUID, dados: CartItemsAddQuantity, db: AsyncSession = Depends(get_db)):
+async def add_one_more_look_cart(look_id:UUID, dados: CartItemsAddQuantity, user_id: UUID = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
+    
     cart_user = await db.scalar(select(Cart).where(Cart.id == dados.cart_id))
     look = await db.scalar(select(CartItems).where((CartItems.cart_id == cart_user.id) & (CartItems.look_id == look_id)))
     look.quantity += dados.quantity

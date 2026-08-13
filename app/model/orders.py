@@ -48,5 +48,12 @@ class Order(Base):
     shipping_address: Mapped[dict] = mapped_column(JSONB, nullable=False)    
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default= func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-    user = relationship("Profiles", back_populates= "user")
-    adress = relationship("Address", back_populates= "address")
+    user = relationship("Profile",  back_populates="orders")
+    address = relationship(
+    "Address",
+    back_populates="orders"
+)   
+    items = relationship(
+    "OrderItems",
+    back_populates="order"
+)

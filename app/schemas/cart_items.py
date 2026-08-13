@@ -55,9 +55,9 @@ class ListCartItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     looks: list[CartItemLookResponse]
+    price_total: Decimal
 
 
 
 class DeleteLookCartItemUser(BaseModel):
-    user_id: UUID
     look_id: UUID

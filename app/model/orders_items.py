@@ -52,10 +52,7 @@ class OrderItems(Base):
     )
 
     # Relacionamentos
-    order = relationship(
-        "Orders",
-        back_populates="order_items"
-    )
+    order = relationship("Order", back_populates="items")
 
     look = relationship(
         "Look",
