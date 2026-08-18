@@ -96,7 +96,16 @@ async def _get_cart_item(
 async def add_look_cart(db: AsyncSession, dados: CartItemsAdd, user_id:UUID) -> CartItems:
 
     cart = await _get_cart_by_user(db, user_id)
-    await _get_look(db, dados.look_id)
+    look = await _get_look(db, dados.look_id)
+
+    # TODO(estoque): quando `Look.stock_quantity` existir aqui (a coluna já
+    # existe em nem_schema.sql; falta o campo em `model/look.py` e nos
+    # schemas), validar antes de criar o CartItems:
+    #   - 400 se look.stock_quantity <= 0 ("Sem estoque disponível")
+    #   - 400 se dados.quantity > look.stock_quantity
+    # Validação otimista (não reserva): o checkout deve reconfirmar o
+    # estoque no momento da compra, porque o saldo pode mudar entre o
+    # carrinho e a finalização do pedido.
 
     result = await db.execute(
         select(CartItems).where(
@@ -216,6 +225,8 @@ async def add_quantity(db: AsyncSession, user_id: UUID, look_id: UUID, dados: Ca
         look_id=look_id,
     )
 
+    # TODO(estoque): antes de somar, buscar o look (`_get_look`) e bloquear
+    # com 400 se `cart_item.quantity + dados.quantity > look.stock_quantity`.
     cart_item.quantity += dados.quantity
 
     await db.commit()

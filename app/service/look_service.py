@@ -85,6 +85,30 @@ async def search_looks(
     return {"items": looks, "next_cursor": next_cursor}
 
 
+async def list_my_looks(
+    db: AsyncSession, user_id: UUID, limit: int, cursor: datetime | None
+) -> dict:
+    """Todos os looks da loja logada, qualquer status — usado pela tela de
+    gestão de catálogo/estoque. Diferente de `search_looks`, que só mostra
+    `status == 'active'` (é a versão pública, via `GET /sellers/{id}/looks`).
+    """
+    seller = await seller_service.get_seller_by_owner(db, user_id)
+    if not seller:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas vendedores têm catálogo próprio",
+        )
+    query = select(Look).where(Look.seller_id == seller.id)
+    if cursor is not None:
+        query = query.where(Look.created_at < cursor)
+    query = query.order_by(Look.created_at.desc()).limit(limit)
+
+    result = await db.execute(query)
+    looks = list(result.scalars().all())
+    next_cursor = looks[-1].created_at.isoformat() if len(looks) == limit else None
+    return {"items": looks, "next_cursor": next_cursor}
+
+
 async def create_look(db: AsyncSession, user_id: UUID, dados: LookCreate) -> Look:
     # Só quem tem loja publica looks; o look pertence à loja (seller_id).
     seller = await seller_service.get_seller_by_owner(db, user_id)

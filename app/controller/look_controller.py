@@ -37,6 +37,19 @@ async def buscar_looks(
     return await look_service.search_looks(db, q, category, limit, cursor)
 
 
+# Precisa vir ANTES de `/{look_id}` pelo mesmo motivo de `/search`.
+@router.get("/mine", response_model=FeedResponse)
+@limiter.limit("30/minute")
+async def meus_looks(
+    request: Request,
+    limit: int = Query(20, ge=1, le=50),
+    cursor: datetime | None = Query(None),
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    return await look_service.list_my_looks(db, user_id, limit, cursor)
+
+
 @router.get("/{look_id}", response_model=LookResponse)
 async def get_look(
     look_id: UUID,

@@ -1,7 +1,7 @@
 from uuid import UUID
 from decimal import Decimal
 from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _validar_fotos(v: list[str]) -> list[str]:
@@ -24,6 +24,7 @@ class LookCreate(BaseModel):
     description: str | None = None
     price: Decimal | None = None
     buy_link: str | None = None
+    stock_quantity: int = Field(0, ge=0)
 
     _fotos = field_validator("photos")(_validar_fotos)
     _videos = field_validator("videos")(_validar_videos)
@@ -37,6 +38,7 @@ class LookUpdate(BaseModel):
     description: str | None = None
     price: Decimal | None = None
     buy_link: str | None = None
+    stock_quantity: int | None = Field(None, ge=0)
 
     @field_validator("photos")
     @classmethod
@@ -56,6 +58,7 @@ class LookResponse(BaseModel):
     videos: list[str] = []
     price: Decimal | None = None
     buy_link: str | None = None
+    stock_quantity: int = 0
     likes_count: int = 0
     saves_count: int = 0
     status: str
