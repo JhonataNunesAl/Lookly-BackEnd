@@ -1,9 +1,14 @@
+import re
 from uuid import UUID
 from datetime import date, timedelta
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 # Aproximação de 18 anos (validação fina fica no CHECK do banco).
 _MIN_AGE_DAYS = 18 * 365
+# Espelha o CHECK de public.profiles.username em nem_schema.sql — validar
+# aqui dá um 422 claro em vez de deixar a violação estourar como
+# IntegrityError não tratada no commit (ver profile_service.update_me).
+_USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,30}$")
 
 
 class ProfileUpdate(BaseModel):
@@ -12,8 +17,17 @@ class ProfileUpdate(BaseModel):
     username: str | None = None
     full_name: str | None = None
     avatar_url: str | None = None
-    bio: str | None = None
+    bio: str | None = Field(None, max_length=300)  # espelha CHECK de profiles.bio
     birth_date: date | None = None
+
+    @field_validator("username")
+    @classmethod
+    def formato_username(cls, v: str | None) -> str | None:
+        if v is not None and not _USERNAME_RE.match(v):
+            raise ValueError(
+                "Usuário precisa ter 3-30 caracteres: letras minúsculas, números, _ ou ."
+            )
+        return v
 
     @field_validator("birth_date")
     @classmethod

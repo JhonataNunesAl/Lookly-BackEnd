@@ -1,10 +1,14 @@
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from schemas.look import LookResponse
 
 
 class CollectionCreate(BaseModel):
-    name: str
+    # Espelha o CHECK de public.collections.name em nem_schema.sql — sem
+    # isso, um nome vazio ou muito longo só falhava no commit e virava a
+    # mensagem errada ("você já tem uma coleção com esse nome", ver
+    # wardrobe_service.create_collection) em vez de um erro de formato.
+    name: str = Field(min_length=1, max_length=60)
     cover_url: str | None = None
     is_public: bool = False
 

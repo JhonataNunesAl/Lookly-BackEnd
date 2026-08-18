@@ -69,13 +69,26 @@ async def become_seller(db: AsyncSession, user_id: UUID, dados: SellerCreate) ->
     try:
         await db.commit()
     except IntegrityError:
+        # Pydantic já cobre formato de nome/slug (schemas/seller.py) — o que
+        # sobra pro banco pegar é conflito de unicidade (duas requisições
+        # concorrentes da mesma pessoa, ou slug já usado por outra loja).
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="store_slug já está em uso",
+            detail=await _mensagem_conflito_seller(db, user_id),
         )
     await db.refresh(seller)
     return seller
+
+
+async def _mensagem_conflito_seller(db: AsyncSession, user_id: UUID) -> str:
+    """Desambigua a UNIQUE violation de become_seller: se essa pessoa já tem
+    loja agora, o conflito era owner_profile_id (corrida entre duas
+    requisições); senão, foi o store_slug mesmo. Evita dizer "slug em uso"
+    quando o problema real é "você já tem uma loja"."""
+    if await get_seller_by_owner(db, user_id):
+        return "Você já tem uma loja"
+    return "store_slug já está em uso"
 
 
 async def update_me(db: AsyncSession, user_id: UUID, dados: SellerUpdate) -> Seller:

@@ -1,12 +1,28 @@
 from uuid import UUID
 from datetime import datetime
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
 from schemas.look import LookCreate, LookUpdate
 from service import seller_service
+
+
+async def _commit_ou_400(db: AsyncSession) -> None:
+    """Rede de segurança: o Pydantic (schemas/look.py) já espelha os CHECKs
+    de nome/preço/estoque do banco, mas essa é a última linha de defesa
+    contra qualquer constraint que o schema não cubra — sem isso, o commit
+    falhando vira um 500 genérico em vez de um erro claro pro cliente."""
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não foi possível salvar o look — confira os dados enviados.",
+        )
 
 
 async def _get_look(db: AsyncSession, look_id: UUID) -> Look:
@@ -121,7 +137,7 @@ async def create_look(db: AsyncSession, user_id: UUID, dados: LookCreate) -> Loo
 
     look = Look(seller_id=seller.id, **dados.model_dump())
     db.add(look)
-    await db.commit()
+    await _commit_ou_400(db)
     await db.refresh(look)
     return look
 
@@ -146,7 +162,7 @@ async def update_look(
         await _validar_categoria(db, payload["category_id"])
     for campo, valor in payload.items():
         setattr(look, campo, valor)
-    await db.commit()
+    await _commit_ou_400(db)
     await db.refresh(look)
     return look
 

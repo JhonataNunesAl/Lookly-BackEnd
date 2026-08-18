@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.profile import Profile
@@ -35,7 +36,21 @@ async def update_me(db: AsyncSession, user_id: UUID, dados: ProfileUpdate) -> Pr
     profile = await _get_profile(db, user_id)
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(profile, campo, valor)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        # Rede de segurança: o Pydantic já valida formato de username e
+        # tamanho de bio (schemas/profile.py), mas conflito de unicidade só
+        # o banco consegue detectar (duas pessoas escolhendo o mesmo username
+        # ao mesmo tempo). Sem isso, essa corrida virava um 500 genérico.
+        await db.rollback()
+        sqlstate = getattr(getattr(e, "orig", None), "sqlstate", None)
+        detail = (
+            "Esse nome de usuário já está em uso."
+            if sqlstate == "23505"
+            else "Não foi possível atualizar o perfil — confira os dados enviados."
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     await db.refresh(profile)
     return await _with_role(db, profile)
 

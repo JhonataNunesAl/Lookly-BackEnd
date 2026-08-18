@@ -55,6 +55,7 @@ pyyaml_env_tag==1.1
 requests==2.34.2
 rsa==4.9.1
 six==1.17.0
+pytest==8.0.2
 slowapi==0.1.9
 SQLAlchemy==2.0.22
 starlette==0.47.3

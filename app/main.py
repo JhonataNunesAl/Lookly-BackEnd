@@ -7,8 +7,19 @@ from fastapi.responses import JSONResponse
 
 from routers import router
 from core.rate_limiter import limiter
+from core.logging_config import setup_logging, RequestIdMiddleware
+
+setup_logging()
 
 app = FastAPI(title="Lookly API")
+
+# Um id curto por requisição, propagado via contextvar pra todo log emitido
+# durante ela carregar o mesmo id — indispensável pra separar requisições
+# concorrentes num servidor async. Devolvido em X-Request-ID pro cliente
+# poder citar numa eventual investigação. Também é aqui dentro (não em
+# @app.exception_handler(Exception)) que erro não tratado é pego e logado
+# — ver o docstring de RequestIdMiddleware pra entender por quê.
+app.add_middleware(RequestIdMiddleware)
 
 # Rate Limit
 app.state.limiter = limiter

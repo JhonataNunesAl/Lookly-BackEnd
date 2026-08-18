@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class BodyProfileUpdate(BaseModel):
@@ -12,9 +12,14 @@ class BodyProfileUpdate(BaseModel):
     (o ideal seria envelope encryption com KMS), mas fecha o gap real.
     """
 
-    weight_kg: float | None = None
-    height_cm: float | None = None
-    measurements: str | None = None
+    # Faixas plausíveis de um corpo humano — NUNCA é aplicado pelo banco
+    # (weight_kg_enc/height_cm_enc guardam ciphertext, não dá pra ter CHECK
+    # numérico em cima disso), então isso é a ÚNICA validação que existe.
+    # Sem isso, nada impedia peso negativo/zero ou um valor absurdo indo
+    # direto pro provador virtual de IA que vai consumir esse dado depois.
+    weight_kg: float | None = Field(None, gt=0, le=500)
+    height_cm: float | None = Field(None, gt=0, le=300)
+    measurements: str | None = Field(None, max_length=2000)
     body_photo_key: str | None = None
 
 

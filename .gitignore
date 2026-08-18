@@ -8,6 +8,7 @@ CLAUDE.md
 schema.sql
 nem_schema.sql
 *.log
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -38,7 +38,9 @@ async def listar_armario(
 
 
 @router.delete("/saved-looks/{look_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute")
 async def remover_do_armario(
+    request: Request,
     look_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
@@ -59,7 +61,9 @@ async def listar_colecoes(
 @router.post(
     "/collections", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED
 )
+@limiter.limit("20/hour")
 async def criar_colecao(
+    request: Request,
     dados: CollectionCreate,
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
@@ -77,7 +81,9 @@ async def listar_looks_da_colecao(
 
 
 @router.post("/collections/{collection_id}/looks", status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute")
 async def adicionar_look_na_colecao(
+    request: Request,
     collection_id: UUID,
     dados: CollectionItemAdd,
     user_id: UUID = Depends(get_current_user_id),
@@ -93,7 +99,9 @@ async def adicionar_look_na_colecao(
     "/collections/{collection_id}/looks/{look_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@limiter.limit("60/minute")
 async def remover_look_da_colecao(
+    request: Request,
     collection_id: UUID,
     look_id: UUID,
     user_id: UUID = Depends(get_current_user_id),

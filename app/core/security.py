@@ -1,8 +1,11 @@
+import logging
 import time
 import httpx
 from jose import jwt, JWTError
 from fastapi import HTTPException, status
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Cache do JWKS. Buscar a cada request seria um round-trip extra por chamada;
 # o Supabase rotaciona chaves raramente, então um TTL curto já basta.
@@ -23,11 +26,15 @@ def _fetch_jwks(force: bool = False) -> list[dict]:
         resp = httpx.get(settings.SUPABASE_JWKS_URL, timeout=10)
         resp.raise_for_status()
         keys = resp.json().get("keys", [])
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as e:
         # Se a rede falhar mas houver cache antigo, é melhor usá-lo do que
-        # derrubar toda a autenticação.
+        # derrubar toda a autenticação. De qualquer forma isso é sinal de um
+        # problema real de rede/Supabase — sem log, os dois casos abaixo
+        # aconteciam em silêncio total.
         if _jwks_cache["keys"] is not None:
+            logger.warning("JWKS indisponível (%s), usando cache antigo", e)
             return _jwks_cache["keys"]
+        logger.warning("JWKS indisponível (%s) e sem cache — autenticação vai falhar", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Não foi possível obter as chaves de verificação do Supabase",

@@ -18,11 +18,15 @@ def _validar_videos(v: list[str] | None) -> list[str] | None:
 
 class LookCreate(BaseModel):
     category_id: UUID  # categoria obrigatória
-    name: str
+    # min/max espelham o CHECK de public.looks.name em nem_schema.sql —
+    # sem isso, um nome fora da faixa só falhava no commit (IntegrityError
+    # não tratada = 500 genérico, ver look_service.create_look).
+    name: str = Field(min_length=2, max_length=120)
     photos: list[str]
     videos: list[str] = []
     description: str | None = None
-    price: Decimal | None = None
+    # ge=0 espelha o CHECK de public.looks.price — mesma lógica do name acima.
+    price: Decimal | None = Field(None, ge=0)
     buy_link: str | None = None
     stock_quantity: int = Field(0, ge=0)
 
@@ -32,11 +36,11 @@ class LookCreate(BaseModel):
 
 class LookUpdate(BaseModel):
     category_id: UUID | None = None
-    name: str | None = None
+    name: str | None = Field(None, min_length=2, max_length=120)
     photos: list[str] | None = None
     videos: list[str] | None = None
     description: str | None = None
-    price: Decimal | None = None
+    price: Decimal | None = Field(None, ge=0)
     buy_link: str | None = None
     stock_quantity: int | None = Field(None, ge=0)
 

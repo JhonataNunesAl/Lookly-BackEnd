@@ -1,20 +1,26 @@
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Espelham os CHECKs de public.sellers em nem_schema.sql — sem isso, um
+# slug/nome fora do formato só falhava no commit (IntegrityError não
+# tratada), e a mensagem de erro dizia "já está em uso" mesmo quando o
+# problema era formato, não conflito (ver seller_service).
+_SLUG_PATTERN = r"^[a-z0-9-]{3,50}$"
 
 
 class SellerCreate(BaseModel):
-    store_name: str
-    store_slug: str
+    store_name: str = Field(min_length=2, max_length=80)
+    store_slug: str = Field(pattern=_SLUG_PATTERN)
     store_logo_url: str | None = None
     description: str | None = None
     store_url: str | None = None
 
 
 class SellerUpdate(BaseModel):
-    store_name: str | None = None
-    store_slug: str | None = None
+    store_name: str | None = Field(None, min_length=2, max_length=80)
+    store_slug: str | None = Field(None, pattern=_SLUG_PATTERN)
     store_logo_url: str | None = None
     description: str | None = None
     store_url: str | None = None

@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +6,8 @@ from sqlalchemy.future import select
 from model.body_profile import BodyProfile
 from schemas.body_profile import BodyProfileUpdate, BodyProfileResponse
 from core import crypto
+
+logger = logging.getLogger(__name__)
 
 
 async def _get_or_create(db: AsyncSession, user_id: UUID) -> BodyProfile:
@@ -18,24 +21,27 @@ async def _get_or_create(db: AsyncSession, user_id: UUID) -> BodyProfile:
     return body
 
 
-def _decrypt_optional(value: str | None) -> str | None:
+def _decrypt_optional(value: str | None, profile_id: UUID, campo: str) -> str | None:
     if value is None:
         return None
     try:
         return crypto.decrypt(value)
     except Exception:
         # Dado corrompido ou chave trocada — não derruba o endpoint, só
-        # devolve vazio (a pessoa redigita e regrava).
+        # devolve vazio (a pessoa redigita e regrava). Sem isso a falha
+        # desaparecia sem deixar rastro; nunca logar `value` (é o cifrado) nem
+        # o resultado (seria o dado corporal em claro).
+        logger.exception("Falha ao decifrar %s de body_profile %s", campo, profile_id)
         return None
 
 
 def _to_response(body: BodyProfile) -> BodyProfileResponse:
-    peso = _decrypt_optional(body.weight_kg_enc)
-    altura = _decrypt_optional(body.height_cm_enc)
+    peso = _decrypt_optional(body.weight_kg_enc, body.profile_id, "weight_kg")
+    altura = _decrypt_optional(body.height_cm_enc, body.profile_id, "height_cm")
     return BodyProfileResponse(
         weight_kg=float(peso) if peso is not None else None,
         height_cm=float(altura) if altura is not None else None,
-        measurements=_decrypt_optional(body.measurements_enc),
+        measurements=_decrypt_optional(body.measurements_enc, body.profile_id, "measurements"),
         body_photo_key=body.body_photo_key,
         ai_consent_at=body.ai_consent_at,
         ai_consent_revoked_at=body.ai_consent_revoked_at,

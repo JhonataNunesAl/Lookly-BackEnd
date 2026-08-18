@@ -12,7 +12,12 @@ from schemas.collection import CollectionCreate
 # ---- Guarda-roupa (gesto deliberado de salvar) ----
 
 async def save_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
-    exists = await db.execute(select(Look.id).where(Look.id == look_id))
+    # status == "active": mesmo gap que existia em GET /looks/{id} antes de
+    # _assert_visible (ver look_service) — sem isso, dava pra salvar um look
+    # em draft/under_review/removed sabendo (ou adivinhando) o UUID.
+    exists = await db.execute(
+        select(Look.id).where(Look.id == look_id, Look.status == "active")
+    )
     if not exists.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
@@ -28,10 +33,13 @@ async def save_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
 
 
 async def list_saved_looks(db: AsyncSession, user_id: UUID) -> list[Look]:
+    # status == "active": se o look foi removido pela moderação DEPOIS de
+    # salvo, ele precisa sumir do armário — sem isso ficava visível pra
+    # sempre, moderação virava decorativa pra quem já tinha salvo antes.
     query = (
         select(Look)
         .join(SavedLook, SavedLook.look_id == Look.id)
-        .where(SavedLook.user_id == user_id)
+        .where(SavedLook.user_id == user_id, Look.status == "active")
         .order_by(SavedLook.created_at.desc())
     )
     result = await db.execute(query)
@@ -103,10 +111,11 @@ async def list_collection_looks(
     db: AsyncSession, user_id: UUID, collection_id: UUID
 ) -> list[Look]:
     await _get_owned_collection(db, user_id, collection_id)
+    # status == "active": mesmo raciocínio de list_saved_looks.
     query = (
         select(Look)
         .join(CollectionItem, CollectionItem.look_id == Look.id)
-        .where(CollectionItem.collection_id == collection_id)
+        .where(CollectionItem.collection_id == collection_id, Look.status == "active")
         .order_by(CollectionItem.created_at.desc())
     )
     result = await db.execute(query)
@@ -118,7 +127,10 @@ async def add_look_to_collection(
 ) -> None:
     await _get_owned_collection(db, user_id, collection_id)
 
-    look = await db.execute(select(Look.id).where(Look.id == look_id))
+    # status == "active": mesmo raciocínio de save_look.
+    look = await db.execute(
+        select(Look.id).where(Look.id == look_id, Look.status == "active")
+    )
     if not look.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
