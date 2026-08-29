@@ -11,7 +11,7 @@ class CartItems(Base):
     __tablename__ = 'cart_items'
     id: Mapped[uuid.UUID] = mapped_column(UUID, default=uuid.uuid4, primary_key=True)
     cart_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cart.id", ondelete='CASCADE'))
-    look_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("looks.id", ondelete="CASCADE"), unique=True)
+    look_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("looks.id", ondelete="CASCADE"))
     quantity: Mapped[int] = mapped_column(default=1)
     look = relationship(
     "Look",
