@@ -230,3 +230,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+CART_ISSUES.md
+
+iniciar.sh

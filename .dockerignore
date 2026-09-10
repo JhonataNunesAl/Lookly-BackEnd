@@ -1,0 +1,23 @@
+# Nunca vai pra imagem: segredo local, git, docs e artefatos de execução que
+# só fazem sentido no ambiente de dev. Variáveis reais entram via env vars do
+# Render, não copiando o .env pra dentro do container.
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+app/logs
+
+docs
+README.md
+Requisitos.txt
+CLAUDE.md
+CART_ISSUES.md
+migrations
+alembic.ini
+nem_schema.sql
+schema.sql
