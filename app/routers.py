@@ -1,9 +1,28 @@
 from fastapi import APIRouter
-from controller import usuario_controller
-from controller import company_controller
+from controller import (
+    profile_controller,
+    body_profile_controller,
+    seller_controller,
+    category_controller,
+    look_controller,
+    feed_controller,
+    swipe_controller,
+    wardrobe_controller,
+    report_controller,
+    cart_controller,
+    cart_items_controller
+)
 
 router = APIRouter()
 
-
-router.include_router(usuario_controller.router)
-router.include_router(company_controller.router)
+router.include_router(profile_controller.router)
+router.include_router(body_profile_controller.router)
+router.include_router(seller_controller.router)
+router.include_router(category_controller.router)
+router.include_router(look_controller.router)
+router.include_router(feed_controller.router)
+router.include_router(swipe_controller.router)
+router.include_router(wardrobe_controller.router)
+router.include_router(report_controller.router)
+router.include_router(cart_controller.router)
+router.include_router(cart_items_controller.router)
