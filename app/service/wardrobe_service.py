@@ -1,0 +1,165 @@
+from uuid import UUID
+from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.future import select
+from model.saved_look import SavedLook
+from model.look import Look
+from model.collection import Collection, CollectionItem
+from schemas.collection import CollectionCreate
+
+
+# ---- Guarda-roupa (gesto deliberado de salvar) ----
+
+async def save_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
+    # status == "active": mesmo gap que existia em GET /looks/{id} antes de
+    # _assert_visible (ver look_service) — sem isso, dava pra salvar um look
+    # em draft/under_review/removed sabendo (ou adivinhando) o UUID.
+    exists = await db.execute(
+        select(Look.id).where(Look.id == look_id, Look.status == "active")
+    )
+    if not exists.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
+        )
+    db.add(SavedLook(user_id=user_id, look_id=look_id))
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Look já está no armário"
+        )
+
+
+async def list_saved_looks(db: AsyncSession, user_id: UUID) -> list[Look]:
+    # status == "active": se o look foi removido pela moderação DEPOIS de
+    # salvo, ele precisa sumir do armário — sem isso ficava visível pra
+    # sempre, moderação virava decorativa pra quem já tinha salvo antes.
+    query = (
+        select(Look)
+        .join(SavedLook, SavedLook.look_id == Look.id)
+        .where(SavedLook.user_id == user_id, Look.status == "active")
+        .order_by(SavedLook.created_at.desc())
+    )
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+async def remove_saved_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
+    result = await db.execute(
+        select(SavedLook).where(
+            SavedLook.user_id == user_id, SavedLook.look_id == look_id
+        )
+    )
+    saved = result.scalar_one_or_none()
+    if not saved:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Look não está no armário"
+        )
+    await db.delete(saved)
+    await db.commit()
+
+
+# ---- Coleções (pastas) ----
+
+async def _get_owned_collection(
+    db: AsyncSession, user_id: UUID, collection_id: UUID
+) -> Collection:
+    result = await db.execute(
+        select(Collection).where(Collection.id == collection_id)
+    )
+    collection = result.scalar_one_or_none()
+    if not collection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Coleção não encontrada"
+        )
+    if collection.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Esta coleção não é sua"
+        )
+    return collection
+
+
+async def list_collections(db: AsyncSession, user_id: UUID) -> list[Collection]:
+    result = await db.execute(
+        select(Collection)
+        .where(Collection.user_id == user_id)
+        .order_by(Collection.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def create_collection(
+    db: AsyncSession, user_id: UUID, dados: CollectionCreate
+) -> Collection:
+    collection = Collection(user_id=user_id, **dados.model_dump())
+    db.add(collection)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Você já tem uma coleção com esse nome",
+        )
+    await db.refresh(collection)
+    return collection
+
+
+async def list_collection_looks(
+    db: AsyncSession, user_id: UUID, collection_id: UUID
+) -> list[Look]:
+    await _get_owned_collection(db, user_id, collection_id)
+    # status == "active": mesmo raciocínio de list_saved_looks.
+    query = (
+        select(Look)
+        .join(CollectionItem, CollectionItem.look_id == Look.id)
+        .where(CollectionItem.collection_id == collection_id, Look.status == "active")
+        .order_by(CollectionItem.created_at.desc())
+    )
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+async def add_look_to_collection(
+    db: AsyncSession, user_id: UUID, collection_id: UUID, look_id: UUID
+) -> None:
+    await _get_owned_collection(db, user_id, collection_id)
+
+    # status == "active": mesmo raciocínio de save_look.
+    look = await db.execute(
+        select(Look.id).where(Look.id == look_id, Look.status == "active")
+    )
+    if not look.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Look não encontrado"
+        )
+
+    db.add(CollectionItem(collection_id=collection_id, look_id=look_id))
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Look já está nesta coleção"
+        )
+
+
+async def remove_look_from_collection(
+    db: AsyncSession, user_id: UUID, collection_id: UUID, look_id: UUID
+) -> None:
+    await _get_owned_collection(db, user_id, collection_id)
+    result = await db.execute(
+        select(CollectionItem).where(
+            CollectionItem.collection_id == collection_id,
+            CollectionItem.look_id == look_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Look não está na coleção"
+        )
+    await db.delete(item)
+    await db.commit()
