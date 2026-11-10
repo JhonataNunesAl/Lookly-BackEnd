@@ -57,7 +57,8 @@ diretamente.
     ├── routers.py          # registra os controllers sob /api
     ├── requirements.txt
     ├── core/               # config.py (.env), security.py (JWT), crypto.py (cifra do documento),
-    │                       # cnpj_lookup.py / document_validation.py (CPF/CNPJ), rate_limiter.py, logging_config.py
+    │                       # cnpj_lookup.py / document_validation.py (CPF/CNPJ), rate_limiter.py, logging_config.py,
+    │                       # log_scrub.py (limpa segredos/dados pessoais de logs), body_limit.py, schema_guard.py
     ├── db/database.py      # engine async + get_db()
     ├── dependencies/auth.py# get_current_user_id
     ├── model/              # tabelas SQLAlchemy (profile, body_profile, seller, category, look, signal,
@@ -66,7 +67,7 @@ diretamente.
     ├── controller/         # rotas por domínio (profile, body_profile, seller, category, look, feed,
     │                       # swipe, wardrobe, report, cart, cart_items, upload)
     ├── service/            # regras de negócio e queries assíncronas
-    └── tests/              # test_audit_fixes.py, test_uploads_and_stock.py (python -m pytest tests -q)
+    └── tests/              # 176 testes, sem banco nem rede (cd app && python -m pytest tests -q)
 ```
 
 ---
@@ -81,9 +82,11 @@ A API **não** faz cadastro/login nem guarda senhas — isso é responsabilidade
 4. [`app/dependencies/auth.py`](app/dependencies/auth.py) → `get_current_user_id` valida o token
    ([`app/core/security.py`](app/core/security.py): assinatura **assimétrica (ES256/RS256) via JWKS** do
    projeto — o padrão dos projetos novos do Supabase — ou HS256 com o `SUPABASE_JWT_SECRET` legado;
-   mais expiração e audience `authenticated`) e retorna o `id` do usuário (igual a `profiles.id`).
+   mais expiração e audience `authenticated`; biblioteca **PyJWT**, com a lista de algoritmos definida
+   pelo tipo da chave e nunca pelo cabeçalho do token) e retorna o `id` do usuário (igual a `profiles.id`).
 
-Requisições sem token, ou com token inválido/expirado, recebem **401**.
+Requisições sem token, ou com token inválido/expirado, recebem **401** (versões antigas do FastAPI
+davam 403 para token ausente).
 
 ---
 
@@ -98,6 +101,7 @@ Todos sob o prefixo `/api`. 🔒 = exige token. **As rotas do carrinho terminam 
 | GET 🔒 | `/profiles/me`                    | Perfil do usuário + papel real (`is_seller`, `seller_id`)        |
 | PUT 🔒 | `/profiles/me`                    | Atualiza username, nome, foto, bio, `birth_date` (18+)           |
 | GET 🔒 | `/profiles/me/category-affinity`  | Afinidade por categoria (pontuada por triggers em curtir/salvar) |
+| DELETE 🔒 | `/profiles/me`                 | **Exclui a conta** (LGPD / Play Store). Corpo `{"confirmacao": "EXCLUIR"}`; 204. Apaga loja, peças, dados, arquivos e o login; **409** se houver pedidos; 3/hora. Exige `SUPABASE_SERVICE_KEY` |
 
 ### Dados corporais (sensíveis — só o dono)
 | Método  | Rota                      | Descrição                                                    |
@@ -178,6 +182,11 @@ sem rotas).
 |---------|------------------|---------------------------------------------------------------------------------------------|
 | POST 🔒 | `/uploads/image` | Corpo = bytes crus da imagem (`Content-Type: image/jpeg\|png\|webp`, máx. 5 MB). Devolve `{url}` pública para usar em `photos`, `avatar_url` ou `store_logo_url`. Valida o tipo pelos bytes; grava em `<user_id>/<uuid>.<ext>` |
 
+### Logs de erro do app
+| Método | Rota           | Descrição                                                                                      |
+|--------|----------------|------------------------------------------------------------------------------------------------|
+| POST   | `/logs/client` | O app envia lotes (1–20) de erros/exceções; viram uma linha JSON por entrada no log do servidor (logger `client`). Token opcional (sem token, sem id de usuário). Máx. 64 KB, 30/min; segredos e dados pessoais são removidos antes de gravar |
+
 ### Denúncias (moderação)
 | Método | Rota        | Descrição                                          |
 |--------|-------------|----------------------------------------------------|
@@ -238,12 +247,18 @@ SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_JWT_SECRET=<opcional>          # só para projetos com o segredo HS256 legado
 SUPABASE_SERVICE_KEY=<service-role-key> # só no servidor, nunca no app
 DOCUMENT_ENCRYPTION_KEY=<base64 AES-256> # cifra o CPF/CNPJ (PUT /sellers/me/document)
+SCHEMA_GUARD=1                          # opcional; 0 desliga a checagem da coluna looks.sizes na subida
 STORAGE_BUCKET=lookly-media             # opcional; bucket público (leitura) das imagens enviadas
 CORS_ORIGINS=http://localhost:3000,http://localhost:8081
 ```
 
 > A API não sobe sem `DATABASE_URL` e sem `SUPABASE_URL` (ou `SUPABASE_JWT_SECRET`).
-> `DOCUMENT_ENCRYPTION_KEY` só é exigida na hora de gravar o documento fiscal.
+> `DOCUMENT_ENCRYPTION_KEY` só é exigida na hora de gravar o documento fiscal. A
+> `SUPABASE_SERVICE_KEY` é necessária para o upload de imagens e para excluir a conta.
+>
+> Na subida a API confere se `looks.sizes` existe e, se não, cria (idempotente). Se o banco estiver
+> pausado/indisponível ela sobe mesmo assim e as rotas que usam o banco respondem 500 — é o que
+> acontece no Render quando o projeto do Supabase está pausado.
 
 ### 4. Subir a API
 ```bash
@@ -284,5 +299,7 @@ dorme quando ocioso e a primeira requisição depois disso pode levar de 15 a 50
   consentimento LGPD no momento da leitura).
 - **Partições de `look_views`**: job `pg_cron` mensal (as partições existentes vão até 2026-12).
 - **Chat interno** para enviar look a um amigo.
-- **Exclusão de conta** (LGPD) com limpeza explícita de `look_views` (sem FK).
 - **Signed URLs** para a foto de corpo (bucket privado).
+- **Exclusão de conta com pedidos**: hoje devolve 409 (pedido é registro fiscal); falta o fluxo de
+  anonimização para esse caso.
+- **Teste real das novas rotas** (exclusão de conta, log) contra o banco vivo, com conta descartável.
