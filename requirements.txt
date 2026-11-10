@@ -1,0 +1,4 @@
+# O Render (render.yaml) instala a partir deste arquivo na raiz. As versoes fixas ficam em
+# app/requirements.txt, que tambem e a lista usada pelo Dockerfile: uma lista so, sem duas
+# fontes divergentes (a antiga daqui usava python-jose, que o codigo nao usa mais).
+-r app/requirements.txt
