@@ -46,36 +46,27 @@ diretamente.
 
 ```
 .
-├── main.py                 # ponto de entrada (FastAPI app)
-├── routers.py              # registra os controllers
-├── schema.sql              # esquema do banco (rodar no Supabase) — fonte de verdade
-├── requirements.txt
-│
-├── core/
-│   ├── config.py           # settings carregadas do .env
-│   ├── security.py         # verify_supabase_token (valida o JWT)
-│   └── rate_limiter.py     # instância do SlowAPI
-├── db/
-│   └── database.py         # engine async + get_db() (AsyncSession)
-├── dependencies/
-│   └── auth.py             # get_current_user_id (dependência de auth)
-├── model/                  # tabelas SQLAlchemy
-│   ├── base.py
-│   ├── profile.py  body_profile.py  seller.py  category.py
-│   ├── look.py  signal.py (look_likes/look_views)  saved_look.py
-│   ├── collection.py  report.py
-├── schemas/                # modelos Pydantic (entrada/saída + validações)
-│   ├── profile.py  body_profile.py  seller.py  category.py
-│   ├── look.py  swipe.py  collection.py  report.py
-├── controller/             # rotas por domínio
-│   ├── profile_controller.py  body_profile_controller.py
-│   ├── seller_controller.py  category_controller.py  look_controller.py
-│   ├── feed_controller.py  swipe_controller.py
-│   ├── wardrobe_controller.py  report_controller.py
-└── service/                # lógica de negócio por domínio
-    ├── profile_service.py  body_profile_service.py  seller_service.py
-    ├── category_service.py  look_service.py  feed_service.py
-    ├── swipe_service.py  wardrobe_service.py  report_service.py
+├── Dockerfile              # imagem para o Render (copia o CONTEÚDO de app/ para /app)
+├── iniciar.sh              # sobe a API local (cd app + uvicorn --host 0.0.0.0)
+├── schema.sql / nem_schema.sql   # esquema do banco (rodar no Supabase) — fonte de verdade
+├── migrations/ + alembic.ini     # histórico Alembic (o banco vivo tem mudanças fora dele — ver CLAUDE.md)
+├── sql/                    # scripts avulsos para o SQL Editor do Supabase (partições de look_views, fotos de exemplo, `filtros_busca.sql` = coluna de tamanhos)
+├── CART_ISSUES.md          # histórico dos problemas do carrinho (e o que foi resolvido)
+└── app/                    # TODO o código roda de dentro daqui (imports absolutos)
+    ├── main.py             # ponto de entrada (FastAPI app, CORS, rate limit, logging)
+    ├── routers.py          # registra os controllers sob /api
+    ├── requirements.txt
+    ├── core/               # config.py (.env), security.py (JWT), crypto.py (cifra do documento),
+    │                       # cnpj_lookup.py / document_validation.py (CPF/CNPJ), rate_limiter.py, logging_config.py
+    ├── db/database.py      # engine async + get_db()
+    ├── dependencies/auth.py# get_current_user_id
+    ├── model/              # tabelas SQLAlchemy (profile, body_profile, seller, category, look, signal,
+    │                       # saved_look, collection, report, cart, cart_items, orders, orders_items, address)
+    ├── schemas/            # contratos Pydantic de entrada/saída
+    ├── controller/         # rotas por domínio (profile, body_profile, seller, category, look, feed,
+    │                       # swipe, wardrobe, report, cart, cart_items, upload)
+    ├── service/            # regras de negócio e queries assíncronas
+    └── tests/              # test_audit_fixes.py, test_uploads_and_stock.py (python -m pytest tests -q)
 ```
 
 ---
@@ -87,9 +78,10 @@ A API **não** faz cadastro/login nem guarda senhas — isso é responsabilidade
 1. O app autentica o usuário no Supabase (e-mail/senha, Google, Apple, Facebook).
 2. O Supabase devolve um **access token (JWT)**.
 3. O app chama esta API com o header `Authorization: Bearer <jwt>`.
-4. [`dependencies/auth.py`](dependencies/auth.py) → `get_current_user_id` valida o token
-   (assinatura HS256 com o `SUPABASE_JWT_SECRET`, expiração e audience `authenticated`) e
-   retorna o `id` do usuário (igual a `profiles.id`).
+4. [`app/dependencies/auth.py`](app/dependencies/auth.py) → `get_current_user_id` valida o token
+   ([`app/core/security.py`](app/core/security.py): assinatura **assimétrica (ES256/RS256) via JWKS** do
+   projeto — o padrão dos projetos novos do Supabase — ou HS256 com o `SUPABASE_JWT_SECRET` legado;
+   mais expiração e audience `authenticated`) e retorna o `id` do usuário (igual a `profiles.id`).
 
 Requisições sem token, ou com token inválido/expirado, recebem **401**.
 
@@ -97,49 +89,56 @@ Requisições sem token, ou com token inválido/expirado, recebem **401**.
 
 ## Endpoints
 
-Todos sob o prefixo `/api`. 🔒 = exige token.
+Todos sob o prefixo `/api`. 🔒 = exige token. **As rotas do carrinho terminam com `/`**
+(sem a barra o FastAPI responde 307 e alguns clientes perdem o `Authorization`).
 
 ### Perfil
-| Método | Rota                  | Descrição                                                        |
-|--------|-----------------------|------------------------------------------------------------------|
-| GET 🔒 | `/profiles/me`        | Perfil do usuário + papel real (`is_seller`, `seller_id`)        |
-| PUT 🔒 | `/profiles/me`        | Atualiza username, nome, foto, bio, `birth_date` (18+)           |
+| Método | Rota                              | Descrição                                                        |
+|--------|-----------------------------------|------------------------------------------------------------------|
+| GET 🔒 | `/profiles/me`                    | Perfil do usuário + papel real (`is_seller`, `seller_id`)        |
+| PUT 🔒 | `/profiles/me`                    | Atualiza username, nome, foto, bio, `birth_date` (18+)           |
+| GET 🔒 | `/profiles/me/category-affinity`  | Afinidade por categoria (pontuada por triggers em curtir/salvar) |
 
 ### Dados corporais (sensíveis — só o dono)
 | Método  | Rota                      | Descrição                                                    |
 |---------|---------------------------|--------------------------------------------------------------|
-| GET 🔒  | `/body-profile/me`        | Medidas (ciphertext) e chave da foto de corpo                |
-| PUT 🔒  | `/body-profile/me`        | Grava medidas (já cifradas) e `body_photo_key`               |
+| GET 🔒  | `/body-profile/me`        | Peso/altura/medidas (texto; o servidor cifra em repouso) e chave da foto |
+| PUT 🔒  | `/body-profile/me`        | Grava as medidas e `body_photo_key`                          |
 | POST 🔒 | `/body-profile/me/consent`| Concede consentimento de IA (LGPD, versionado)               |
 | DELETE🔒| `/body-profile/me/consent`| Revoga o consentimento                                       |
 
 ### Vendedores (lojas/marcas que postam looks)
-| Método | Rota                    | Descrição                                          |
-|--------|-------------------------|----------------------------------------------------|
-| POST 🔒| `/sellers`              | Cria a loja do usuário (`owner_profile_id`)        |
-| GET 🔒 | `/sellers/me`           | Dados da própria loja                              |
-| PUT 🔒 | `/sellers/me`           | Atualiza a loja                                    |
-| PUT 🔒 | `/sellers/me/document`  | Documento fiscal (ciphertext + hash) em `sellers_private` |
+| Método | Rota                       | Descrição                                                              |
+|--------|----------------------------|------------------------------------------------------------------------|
+| POST 🔒| `/sellers`                 | Cria a loja do usuário (`owner_profile_id`)                            |
+| GET 🔒 | `/sellers/me`              | Dados da própria loja                                                  |
+| PUT 🔒 | `/sellers/me`              | Atualiza a loja                                                        |
+| POST 🔒| `/sellers/verify-document` | Prévia: valida CPF/CNPJ (dígitos + BrasilAPI) sem gravar               |
+| PUT 🔒 | `/sellers/me/document`     | Grava o documento (recebe texto; o servidor valida, cifra e guarda hash) |
+| GET    | `/sellers/search?q=&cursor=` | Busca lojas                                                          |
+| GET    | `/sellers/{id}`            | Vitrine pública da loja                                                |
+| GET    | `/sellers/{id}/looks`      | Looks ativos da loja (paginado)                                        |
 
 ### Categorias
 | Método | Rota           | Descrição                       |
 |--------|----------------|---------------------------------|
-| GET    | `/categories`  | Lista categorias (público)      |
-| POST 🔒| `/categories`  | Cria categoria                  |
+| GET    | `/categories`  | Lista categorias (público). Não há `POST`: criar categoria é feito direto no banco |
 
 ### Looks
-| Método | Rota                  | Descrição                                            |
-|--------|-----------------------|------------------------------------------------------|
-| POST 🔒| `/looks`              | Cria look (só vendedores; valida fotos/vídeos)       |
-| GET    | `/looks/{id}`         | Detalhe do look                                      |
-| PUT 🔒 | `/looks/{id}`         | Atualiza (só o dono)                                 |
-| DELETE🔒| `/looks/{id}`        | Remove (só o dono)                                   |
-| GET    | `/looks/{id}/share`   | Payload de compartilhamento (link/WhatsApp)          |
+| Método | Rota                          | Descrição                                                    |
+|--------|-------------------------------|--------------------------------------------------------------|
+| POST 🔒| `/looks`                      | Cria look (só vendedores; categoria + 1–6 fotos, ≤ 2 vídeos; `stock_quantity` opcional) |
+| GET    | `/looks/search` | Busca looks ativos (não exclui os já vistos). Parâmetros: `q`, `category`, `price_min`, `price_max`, `sizes` (repetido: `sizes=P&sizes=M`), `in_stock`, `sort` (`recent`\|`price_asc`\|`price_desc`\|`popular`), `limit`, `cursor` |
+| GET 🔒 | `/looks/mine`                 | Todos os looks da própria loja, de qualquer `status`         |
+| GET    | `/looks/{id}`                 | Detalhe do look                                              |
+| PUT 🔒 | `/looks/{id}`                 | Atualiza (só quem gerencia a loja) — inclusive `stock_quantity` |
+| DELETE🔒| `/looks/{id}`                | Remove (só quem gerencia a loja)                             |
+| GET    | `/looks/{id}/share`           | Payload de compartilhamento (link/WhatsApp)                  |
 
 ### Feed (funcionalidade central)
 | Método | Rota                                       | Descrição                                                                     |
 |--------|--------------------------------------------|-------------------------------------------------------------------------------|
-| GET 🔒 | `/feed?category=<slug>&limit=&cursor=`     | Looks ativos que o usuário **ainda não** viu (paginado). `category` é **opcional** |
+| GET 🔒 | `/feed?category=<slug>&limit=&cursor=`     | Looks ativos que o usuário **ainda não** viu (paginado, por `created_at`). `category` é **opcional** |
 
 ### Swipe
 | Método | Rota       | Descrição                                                                          |
@@ -157,6 +156,27 @@ Todos sob o prefixo `/api`. 🔒 = exige token.
 | GET 🔒  | `/collections/{id}/looks`                           | Looks de uma coleção                            |
 | POST 🔒 | `/collections/{id}/looks`                           | Adiciona look à coleção                         |
 | DELETE🔒| `/collections/{id}/looks/{look_id}`                 | Remove look da coleção                          |
+
+### Carrinho
+O registro `Cart` do usuário é criado por um **trigger do Supabase** (não por esta API); as
+rotas assumem que ele existe. A quantidade é **por delta** (não há "definir N").
+
+| Método  | Rota                              | Descrição                                                                 |
+|---------|-----------------------------------|---------------------------------------------------------------------------|
+| GET 🔒  | `/cart/user/`                     | Carrinho do usuário                                                       |
+| POST 🔒 | `/cart-items/`                    | Adiciona um look (400 se já está no carrinho — para somar use `add`; 400 se sem estoque) |
+| GET 🔒  | `/cart-items/user/`               | Itens do carrinho (com os looks)                                          |
+| PUT 🔒  | `/cart-items/add/{look_id}/`      | Soma `quantity` ao item (400 "Estoque insuficiente" se passar do estoque) |
+| PUT 🔒  | `/cart-items/remove/{look_id}/`   | Subtrai `quantity`. **Chegar a zero dá 500** (ver `CART_ISSUES.md`) — para remover use o `DELETE` |
+| DELETE🔒| `/cart-items/user/`               | Remove um item (corpo JSON `{look_id}`)                                   |
+
+Pedidos e pagamento ainda **não** existem (há os modelos `orders`/`orders_items`/`address`,
+sem rotas).
+
+### Uploads
+| Método  | Rota             | Descrição                                                                                   |
+|---------|------------------|---------------------------------------------------------------------------------------------|
+| POST 🔒 | `/uploads/image` | Corpo = bytes crus da imagem (`Content-Type: image/jpeg\|png\|webp`, máx. 5 MB). Devolve `{url}` pública para usar em `photos`, `avatar_url` ou `store_logo_url`. Valida o tipo pelos bytes; grava em `<user_id>/<uuid>.<ext>` |
 
 ### Denúncias (moderação)
 | Método | Rota        | Descrição                                          |
@@ -189,41 +209,50 @@ Supabase**. A API **não** cria tabelas automaticamente — o `schema.sql` é a 
 
 Tabelas: `profiles`, `body_profiles`, `sellers`, `sellers_private`, `store_members`,
 `categories`, `looks`, `look_likes`, `look_views` (particionada por mês), `saved_looks`,
-`collections`, `collection_items`, `reports`. Dados sensíveis (medidas, documento fiscal) ficam em
+`collections`, `collection_items`, `reports`, `user_category_affinity`, `cart`, `cart_items`
+(+ `orders`/`orders_items`/`addresses`, ainda sem rotas). Dados sensíveis (medidas, documento fiscal) ficam em
 tabelas próprias com RLS restrita ao dono; toda policy é escrita como se fosse o único controle,
-pois a anon key é pública. `look_views` precisa de partições futuras (via `pg_cron`).
+pois a anon key é pública. `look_views` precisa de partições futuras: o banco vivo tem partições mensais **até 2026-12** mais uma partição `DEFAULT`; depois disso os registros caem na `DEFAULT` até alguém criar as próximas (idealmente um job `pg_cron` mensal).
 
 ---
 
 ## Como rodar localmente
 
 ### 1. Pré-requisitos
-- Python 3.11+
+- Python 3.11+ (a imagem Docker usa 3.12)
 - Um projeto no Supabase com o `schema.sql` aplicado
 
 ### 2. Dependências
 ```bash
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 ```
 
 ### 3. Variáveis de ambiente
-Copie [`.env.example`](.env.example) para `.env` e preencha:
+Copie [`app/.env.example`](app/.env.example) para `app/.env` e preencha:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:<senha>@db.<projeto>.supabase.co:5432/postgres
+# Session Pooler do Supabase (IPv4), com a senha URL-encoded — a conexão direta
+# (db.<projeto>.supabase.co) é IPv6-only e não funciona no Render.
+DATABASE_URL=postgresql+asyncpg://postgres.<projeto>:<senha>@aws-0-<regiao>.pooler.supabase.com:5432/postgres
 SUPABASE_URL=https://<projeto>.supabase.co
-SUPABASE_JWT_SECRET=<jwt-secret>        # Project Settings > API > JWT Settings
-SUPABASE_SERVICE_KEY=<service-role-key>
+SUPABASE_JWT_SECRET=<opcional>          # só para projetos com o segredo HS256 legado
+SUPABASE_SERVICE_KEY=<service-role-key> # só no servidor, nunca no app
+DOCUMENT_ENCRYPTION_KEY=<base64 AES-256> # cifra o CPF/CNPJ (PUT /sellers/me/document)
+STORAGE_BUCKET=lookly-media             # opcional; bucket público (leitura) das imagens enviadas
 CORS_ORIGINS=http://localhost:3000,http://localhost:8081
 ```
 
-> ⚠️ `SUPABASE_JWT_SECRET` é o **segredo de assinatura do JWT**, não a service key (`sb_secret_...`).
-> A API não sobe sem `DATABASE_URL` e `SUPABASE_JWT_SECRET`.
+> A API não sobe sem `DATABASE_URL` e sem `SUPABASE_URL` (ou `SUPABASE_JWT_SECRET`).
+> `DOCUMENT_ENCRYPTION_KEY` só é exigida na hora de gravar o documento fiscal.
 
 ### 4. Subir a API
 ```bash
-uvicorn main:app --reload      # http://localhost:8000  |  docs em /docs
+bash iniciar.sh                # http://localhost:8000  |  docs em /docs
+# ou, de dentro de app/:
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+O `--host 0.0.0.0` é necessário para o emulador/aparelho alcançar a API (o emulador Android
+usa `10.0.2.2`; um aparelho físico usa o IP da máquina na rede).
 
 ### 5. Testar com autenticação
 Crie um usuário no Supabase Auth, obtenha o access token e use-o nas chamadas:
@@ -231,16 +260,29 @@ Crie um usuário no Supabase Auth, obtenha o access token e use-o nas chamadas:
 curl -H "Authorization: Bearer <jwt>" http://localhost:8000/api/profiles/me
 ```
 
+### 6. Deploy (Render, via Docker)
+O [`Dockerfile`](Dockerfile) copia o conteúdo de `app/` para `/app` e sobe
+`uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`. No Render: serviço **Docker**, raiz do
+repositório, e as mesmas variáveis do `.env` configuradas no painel. No plano gratuito o serviço
+dorme quando ocioso e a primeira requisição depois disso pode levar de 15 a 50 s.
+
 ---
 
 ## Roadmap (ainda não implementado)
 
+- **Mídia**: o upload de **imagens** existe (`POST /uploads/image`). Faltam vídeos, limpeza de
+  arquivos órfãos no Storage, miniaturas e URLs assinadas (foto de corpo, bucket privado).
+- **Camada de comércio**: rotas de pedidos e pagamento (Mercado Pago) sobre os modelos
+  `orders`/`orders_items`/`address` que já existem, estoque validado no carrinho
+  (`TODO(estoque)` em `cart_items_service.py`), reviews.
+- **Métricas da loja**: o app mostra dashboard/insights com dados de exemplo; falta o agregado real.
+- **Mais filtros na busca**: cor, marca e estilo (hoje só preço, tamanho, estoque e ordem) — pedem
+  uma decisão de modelagem (tags livres, atributos fechados ou embeddings).
+- **Ranqueamento do feed**: o feed ordena só por `created_at`; usar a afinidade por categoria e
+  capturar sinal (dwell time, completion) em `look_views`.
 - **Provador Virtual com IA**: mesclar a foto do look com os dados de `body_profiles` (checando o
   consentimento LGPD no momento da leitura).
-- **Cifragem real** dos campos `*_enc` (envelope encryption com KMS) — hoje a API só persiste o
-  ciphertext que o cliente envia.
-- **Camada de comércio**: pedidos, pagamentos (Mercado Pago), variantes com estoque, reviews.
-- **Ranqueamento do feed**: capturar sinal (dwell time, completion) em `look_views` e ranquear.
+- **Partições de `look_views`**: job `pg_cron` mensal (as partições existentes vão até 2026-12).
 - **Chat interno** para enviar look a um amigo.
 - **Exclusão de conta** (LGPD) com limpeza explícita de `look_views` (sem FK).
-- **Storage/CDN** e signed URLs para a foto de corpo (bucket privado).
+- **Signed URLs** para a foto de corpo (bucket privado).
