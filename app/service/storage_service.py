@@ -51,7 +51,7 @@ def validar_imagem(content_type: str | None, data: bytes) -> str:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Imagem vazia.")
     if len(data) > MAX_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=413,
             detail="Imagem grande demais (máximo de 5 MB).",
         )
     if not _assinatura_confere(tipo, data):
@@ -105,3 +105,39 @@ async def upload_imagem(user_id: UUID, content_type: str | None, data: bytes) ->
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Não foi possível salvar a imagem.")
 
     return f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.STORAGE_BUCKET}/{caminho}"
+
+
+async def remover_pasta_do_usuario(user_id: UUID) -> int:
+    """Apaga tudo que o usuário enviou (`<user_id>/...`), usado na exclusão de conta.
+    Melhor esforço: erro de rede ou do Storage é logado e NÃO propaga — arquivo
+    órfão é aceitável, conta que não consegue ser excluída não é. Devolve quantos
+    arquivos foram removidos."""
+    if not settings.SUPABASE_SERVICE_KEY or not settings.SUPABASE_URL:
+        return 0
+    removidos = 0
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            for _ in range(10):  # até 10 páginas de 100 arquivos
+                lista = await client.post(
+                    f"{settings.SUPABASE_URL}/storage/v1/object/list/{settings.STORAGE_BUCKET}",
+                    headers=_headers("application/json"),
+                    json={"prefix": str(user_id), "limit": 100},
+                )
+                if lista.status_code != 200:
+                    break
+                nomes = [f"{user_id}/{o['name']}" for o in lista.json() if o.get("name")]
+                if not nomes:
+                    break
+                rm = await client.request(
+                    "DELETE",
+                    f"{settings.SUPABASE_URL}/storage/v1/object/{settings.STORAGE_BUCKET}",
+                    headers=_headers("application/json"),
+                    json={"prefixes": nomes},
+                )
+                if rm.status_code >= 400:
+                    logger.warning("Falha ao remover arquivos de %s: HTTP %s", user_id, rm.status_code)
+                    break
+                removidos += len(nomes)
+    except Exception as e:  # noqa: BLE001 — melhor esforço, ver docstring
+        logger.warning("Limpeza do Storage de %s falhou: %s", user_id, type(e).__name__)
+    return removidos

@@ -1,4 +1,7 @@
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.middleware import SlowAPIMiddleware
@@ -10,8 +13,24 @@ from core.rate_limiter import limiter
 from core.logging_config import setup_logging, RequestIdMiddleware
 
 setup_logging()
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Lookly API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Rede de segurança de schema (ver core/schema_guard.py). Nunca impede a subida:
+    # com o banco pausado ou lento, loga e segue.
+    try:
+        from db.database import engine
+        from core.schema_guard import garantir_schema
+
+        await asyncio.wait_for(garantir_schema(engine), timeout=15)
+    except Exception:  # noqa: BLE001
+        logger.exception("Schema guard não pôde rodar (banco indisponível?) — API sobe mesmo assim")
+    yield
+
+
+app = FastAPI(title="Lookly API", lifespan=lifespan)
 
 # Um id curto por requisição, propagado via contextvar pra todo log emitido
 # durante ela carregar o mesmo id — indispensável pra separar requisições

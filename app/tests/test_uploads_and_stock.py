@@ -151,3 +151,41 @@ def test_adicionar_ao_carrinho_sem_estoque_bloqueia():
         with pytest.raises(HTTPException) as e:
             run(cart_items_service.add_look_cart(db, CartItemsAdd(look_id=uuid4(), quantity=1), uuid4()))
     assert e.value.status_code == 400 and "Sem estoque" in e.value.detail
+
+
+# ── limite de tamanho no endpoint (corpo "chunked", sem Content-Length) ───────
+
+def _cliente_com_login():
+    from fastapi.testclient import TestClient
+
+    import main
+    from dependencies.auth import get_current_user_id
+
+    main.app.dependency_overrides[get_current_user_id] = lambda: uuid4()
+    return TestClient(main.app), main
+
+
+def test_upload_chunked_acima_do_teto_413_sem_chamar_o_storage():
+    cliente, main = _cliente_com_login()
+    try:
+        def corpo():  # gerador => requisição chunked, sem Content-Length
+            for _ in range(6):
+                yield b"x" * (1024 * 1024)
+
+        with patch.object(storage_service, "upload_imagem", AsyncMock()) as up:
+            r = cliente.post("/api/uploads/image", content=corpo(), headers={"Content-Type": "image/jpeg"})
+        assert r.status_code == 413
+        up.assert_not_called()
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_upload_pequeno_passa_ate_o_service():
+    cliente, main = _cliente_com_login()
+    try:
+        with patch.object(storage_service, "upload_imagem", AsyncMock(return_value="https://x/y.jpg")) as up:
+            r = cliente.post("/api/uploads/image", content=JPEG, headers={"Content-Type": "image/jpeg"})
+        assert r.status_code == 201 and r.json() == {"url": "https://x/y.jpg"}
+        assert up.call_args.args[2] == JPEG
+    finally:
+        main.app.dependency_overrides.clear()
