@@ -49,7 +49,7 @@ async def buscar_looks(
     except ValidationError as e:
         # 422 com a mensagem legível (em vez do 500 de uma exceção solta)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             detail=e.errors(include_url=False, include_context=False, include_input=False)[0]["msg"],
         )
     return await look_service.search_looks(db, q, category, limit, cursor, filtros=filtros)

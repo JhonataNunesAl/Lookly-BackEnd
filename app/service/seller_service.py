@@ -193,7 +193,7 @@ async def set_document(
             )
         if not resultado.exists or not resultado.active:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail="Esse CNPJ não foi encontrado como uma empresa ativa na Receita Federal.",
             )
         verified_at = datetime.now(timezone.utc)

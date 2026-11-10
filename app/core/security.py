@@ -1,7 +1,8 @@
 import logging
 import time
 import httpx
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWK, PyJWTError
 from fastapi import HTTPException, status
 from core.config import settings
 
@@ -56,6 +57,14 @@ def _key_for(kid: str | None) -> dict | None:
     return None
 
 
+# Algoritmos aceitos POR TIPO DE CHAVE. Misturar tudo numa lista só abre a
+# "confusão de algoritmo": um token HS256 assinado com a chave PÚBLICA (que é, bem,
+# pública) como se fosse segredo. Aqui a chave decide a lista: a do JWKS só valida
+# assinatura assimétrica; o segredo compartilhado só valida HS256.
+_ALG_ASSIMETRICOS = ["ES256", "RS256"]
+_ALG_SIMETRICOS = ["HS256"]
+
+
 def verify_supabase_token(token: str) -> dict:
     """Valida um access token emitido pelo Supabase Auth.
 
@@ -65,34 +74,47 @@ def verify_supabase_token(token: str) -> dict:
     """
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError:
+    except PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token malformado"
         )
 
     if header.get("alg") == "HS256":
         chave = settings.SUPABASE_JWT_SECRET
+        algoritmos = _ALG_SIMETRICOS
         if not chave:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token HS256 recebido mas SUPABASE_JWT_SECRET não está configurado",
             )
     else:
-        chave = _key_for(header.get("kid"))
-        if not chave:
+        jwk = _key_for(header.get("kid"))
+        if not jwk:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Chave de assinatura do token não encontrada",
+            )
+        algoritmos = _ALG_ASSIMETRICOS
+        try:
+            chave = PyJWK(jwk).key
+        except (PyJWTError, ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Chave de assinatura do token inválida",
             )
 
     try:
         payload = jwt.decode(
             token,
             chave,
-            algorithms=settings.JWT_ALGORITHMS,
+            algorithms=algoritmos,
             audience=settings.JWT_AUDIENCE,
+            options={"require": ["exp", "sub", "aud"]},
         )
-    except JWTError:
+    except (PyJWTError, ValueError, TypeError):
+        # ValueError/TypeError: chave do JWKS incompatível com o algoritmo do token
+        # (a biblioteca de criptografia levanta isso em vez de um erro de JWT) —
+        # tem que virar 401, nunca 500.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token inválido ou expirado",

@@ -25,7 +25,8 @@ class Settings:
 
     # O Supabase assina os access tokens com aud="authenticated".
     JWT_AUDIENCE: str = "authenticated"
-    JWT_ALGORITHMS: list[str] = ["ES256", "RS256", "HS256"]
+    # Os algoritmos aceitos são fixados em core/security.py POR TIPO DE CHAVE (ES256/RS256
+    # com o JWKS, HS256 só com o segredo) — uma lista única abre confusão de algoritmo.
 
     # Chave simétrica (AES-256, base64) para cifrar CPF/CNPJ antes de gravar em
     # sellers_private.document_enc. Ver core/crypto.py. Só é exigida na hora de
