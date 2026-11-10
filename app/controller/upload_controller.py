@@ -1,8 +1,9 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from dependencies.auth import get_current_user_id
 from schemas.upload import UploadResponse
 from service import storage_service
+from core.body_limit import ler_corpo_limitado
 from core.rate_limiter import limiter
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
@@ -18,13 +19,6 @@ async def enviar_imagem(
     multipart, então não há parser de formulário na superfície de ataque. Devolve
     a URL pública para usar em `photos` de um look, `avatar_url` ou
     `store_logo_url`."""
-    # Recusa antes de ler o corpo inteiro quando o cliente já declara o tamanho.
-    declarado = request.headers.get("content-length")
-    if declarado and declarado.isdigit() and int(declarado) > storage_service.MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Imagem grande demais (máximo de 5 MB).",
-        )
-    corpo = await request.body()
+    corpo = await ler_corpo_limitado(request, storage_service.MAX_BYTES, "Imagem grande demais (máximo de 5 MB).")
     url = await storage_service.upload_imagem(user_id, request.headers.get("content-type"), corpo)
     return UploadResponse(url=url)
