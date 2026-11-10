@@ -4,7 +4,10 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import get_db
 from dependencies.auth import get_current_user_id, get_current_user_id_optional
-from schemas.look import LookCreate, LookUpdate, LookResponse, FeedResponse
+from decimal import Decimal
+from pydantic import ValidationError
+from fastapi import HTTPException
+from schemas.look import LookCreate, LookUpdate, LookResponse, FeedResponse, LookFiltros, OrdemBusca
 from service import look_service
 from core.rate_limiter import limiter
 
@@ -30,11 +33,26 @@ async def buscar_looks(
     request: Request,
     q: str | None = Query(None, min_length=1, description="texto no nome/descrição"),
     category: str | None = Query(None, description="slug da categoria (opcional)"),
+    price_min: Decimal | None = Query(None, ge=0, description="preço mínimo (exclui peças sem preço)"),
+    price_max: Decimal | None = Query(None, ge=0, description="preço máximo (exclui peças sem preço)"),
+    sizes: list[str] | None = Query(None, description="repita o parâmetro: sizes=P&sizes=M — casa com qualquer um"),
+    in_stock: bool = Query(False, description="só peças com estoque"),
+    sort: OrdemBusca = Query("recent", description="recent | price_asc | price_desc | popular"),
     limit: int = Query(20, ge=1, le=50),
-    cursor: datetime | None = Query(None),
+    cursor: str | None = Query(None, description="`next_cursor` da página anterior"),
     db: AsyncSession = Depends(get_db),
 ):
-    return await look_service.search_looks(db, q, category, limit, cursor)
+    try:
+        filtros = LookFiltros(
+            price_min=price_min, price_max=price_max, sizes=sizes or [], in_stock=in_stock, sort=sort
+        )
+    except ValidationError as e:
+        # 422 com a mensagem legível (em vez do 500 de uma exceção solta)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.errors(include_url=False, include_context=False, include_input=False)[0]["msg"],
+        )
+    return await look_service.search_looks(db, q, category, limit, cursor, filtros=filtros)
 
 
 # Precisa vir ANTES de `/{look_id}` pelo mesmo motivo de `/search`.

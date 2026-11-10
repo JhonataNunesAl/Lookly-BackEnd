@@ -30,6 +30,8 @@ class Look(Base):
     price = Column(Numeric(10, 2), nullable=True)
     buy_link = Column(String, nullable=True)
     stock_quantity = Column(Integer, nullable=False, server_default="0")
+    # Tamanhos disponíveis (ver schemas/look.py: TAMANHOS_VALIDOS). Vazio = não informado.
+    sizes = Column(ARRAY(String), nullable=False, server_default="{}")
     likes_count = Column(Integer, nullable=False, server_default="0")
     saves_count = Column(Integer, nullable=False, server_default="0")
     status = Column(content_status(), nullable=False, server_default="active")

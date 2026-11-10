@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
-from schemas.look import LookCreate, LookUpdate
+from schemas.look import LookCreate, LookUpdate, LookFiltros
 from service import seller_service
 
 
@@ -64,19 +64,52 @@ async def get_look(db: AsyncSession, look_id: UUID, user_id: UUID | None = None)
     return look
 
 
+def _ordenacao(sort: str):
+    """Colunas do ORDER BY de cada ordem. `id` desempata: sem ele, páginas por
+    offset repetem/pulam itens quando há preços ou contadores iguais."""
+    if sort == "price_asc":
+        return [Look.price.asc().nulls_last(), Look.id.asc()]
+    if sort == "price_desc":
+        return [Look.price.desc().nulls_last(), Look.id.asc()]
+    if sort == "popular":
+        # salvar pesa o dobro de curtir — mesma lógica da afinidade por categoria
+        return [(Look.likes_count + 2 * Look.saves_count).desc(), Look.created_at.desc(), Look.id.asc()]
+    return [Look.created_at.desc()]
+
+
+def _parse_cursor(cursor: datetime | str | None, sort: str) -> tuple[datetime | None, int]:
+    """`recent` pagina por data (keyset, estável com inserções); as demais ordens
+    paginam por deslocamento (`cursor` = quantos itens já foram). Devolve
+    (data, deslocamento) — só um dos dois é usado."""
+    if cursor is None:
+        return None, 0
+    try:
+        if sort == "recent":
+            return (cursor if isinstance(cursor, datetime) else datetime.fromisoformat(str(cursor))), 0
+        return None, max(int(str(cursor)), 0)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cursor inválido")
+
+
 async def search_looks(
     db: AsyncSession,
     q: str | None,
     category_slug: str | None,
     limit: int,
-    cursor: datetime | None,
+    cursor: datetime | str | None,
     seller_id: UUID | None = None,
+    filtros: LookFiltros | None = None,
 ) -> dict:
     """Busca por texto em looks ativos — deliberadamente SEM a exclusão de
     "já visto" do feed: procurar precisa achar algo que a pessoa já swipou.
     `seller_id` reaproveita esta mesma função para `GET /sellers/{id}/looks`
     (o catálogo público de uma loja é só esta busca sem termo, filtrada por dona).
+
+    `filtros` (preço, tamanho, estoque, ordem) vem de `GET /looks/search`. Preço
+    mínimo/máximo excluem peças sem preço; tamanho casa com qualquer um dos
+    pedidos; estoque filtra `stock_quantity > 0`.
     """
+    filtros = filtros or LookFiltros()
     query = select(Look).where(Look.status == "active")
 
     if q:
@@ -90,14 +123,31 @@ async def search_looks(
         )
     if seller_id is not None:
         query = query.where(Look.seller_id == seller_id)
-    if cursor is not None:
-        query = query.where(Look.created_at < cursor)
+    if filtros.price_min is not None:
+        query = query.where(Look.price >= filtros.price_min)
+    if filtros.price_max is not None:
+        query = query.where(Look.price <= filtros.price_max)
+    if filtros.sizes:
+        query = query.where(Look.sizes.overlap(filtros.sizes))
+    if filtros.in_stock:
+        query = query.where(Look.stock_quantity > 0)
 
-    query = query.order_by(Look.created_at.desc()).limit(limit)
+    data_corte, deslocamento = _parse_cursor(cursor, filtros.sort)
+    if data_corte is not None:
+        query = query.where(Look.created_at < data_corte)
+
+    query = query.order_by(*_ordenacao(filtros.sort)).limit(limit)
+    if deslocamento:
+        query = query.offset(deslocamento)
 
     result = await db.execute(query)
     looks = list(result.scalars().all())
-    next_cursor = looks[-1].created_at.isoformat() if len(looks) == limit else None
+    if len(looks) < limit:
+        next_cursor = None
+    elif filtros.sort == "recent":
+        next_cursor = looks[-1].created_at.isoformat()
+    else:
+        next_cursor = str(deslocamento + limit)
     return {"items": looks, "next_cursor": next_cursor}
 
 
