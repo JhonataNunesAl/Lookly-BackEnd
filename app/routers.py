@@ -10,7 +10,8 @@ from controller import (
     wardrobe_controller,
     report_controller,
     cart_controller,
-    cart_items_controller
+    cart_items_controller,
+    upload_controller,
 )
 
 router = APIRouter()
@@ -26,3 +27,4 @@ router.include_router(wardrobe_controller.router)
 router.include_router(report_controller.router)
 router.include_router(cart_controller.router)
 router.include_router(cart_items_controller.router)
+router.include_router(upload_controller.router)

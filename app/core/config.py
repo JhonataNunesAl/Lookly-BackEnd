@@ -33,6 +33,10 @@ class Settings:
     # boa parte do app roda sem nunca tocar nesse fluxo.
     DOCUMENT_ENCRYPTION_KEY: str = os.getenv("DOCUMENT_ENCRYPTION_KEY", "")
 
+    # Bucket público (só leitura) das imagens enviadas por POST /api/uploads/image.
+    # É criado sob demanda no primeiro upload — ver service/storage_service.py.
+    STORAGE_BUCKET: str = os.getenv("STORAGE_BUCKET", "lookly-media")
+
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL is not set in the environment variables.")
 
