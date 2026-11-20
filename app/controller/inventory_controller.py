@@ -23,7 +23,8 @@ from schemas.inventory import (
     VendasResponse,
 )
 from schemas.look import LookGestaoResponse
-from service import inventory_service
+from schemas.platform_fee import TaxaDaLoja
+from service import inventory_service, platform_fee_service
 
 router = APIRouter(prefix="/inventory", tags=["Gestão de estoque"])
 
@@ -118,3 +119,15 @@ async def metricas(
     if days not in (7, 30, 90, 365):
         raise HTTPException(status_code=422, detail="Período inválido: use 7, 30, 90 ou 365 dias.")
     return await inventory_service.metricas(db, user_id, days)
+
+
+@router.get("/platform-fee", response_model=TaxaDaLoja)
+@limiter.limit("60/minute")
+async def taxa_da_plataforma(
+    request: Request,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Taxa da plataforma desta loja hoje (0% na demo) e quando ela muda."""
+    seller = await inventory_service.minha_loja(db, user_id)
+    return await platform_fee_service.taxa_da_minha_loja(db, seller)
