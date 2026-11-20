@@ -139,6 +139,22 @@ Todos sob o prefixo `/api`. 🔒 = exige token. **As rotas do carrinho terminam 
 | DELETE🔒| `/looks/{id}`                | Remove (só quem gerencia a loja)                             |
 | GET    | `/looks/{id}/share`           | Payload de compartilhamento (link/WhatsApp)                  |
 
+### Importação e edição em massa (`controller/look_bulk_controller.py`)
+Para lojas com centenas ou milhares de peças. A planilha é lida no servidor (CSV com `;` ou `,`, em UTF-8 ou no
+formato do Excel brasileiro, ou XLSX), até 5.000 linhas e 5 MB por arquivo.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET    | `/looks/import/template?formato=xlsx\|csv` | Planilha modelo (abas Instruções, Produtos, Categorias com lista suspensa, Exemplo) |
+| POST 🔒| `/looks/import/preview` | Corpo = bytes crus da planilha. Valida linha a linha e devolve a prévia (criar/atualizar, erros por linha, fotos citadas por nome de arquivo). **Não grava nada** |
+| POST 🔒| `/looks/bulk` | `{itens: [...], status: active\|draft}` — cria/atualiza até 1.000 peças por chamada. Linhas inválidas voltam em `erros` e não impedem as válidas |
+| PATCH 🔒| `/looks/bulk` | Mesmo ajuste em até 500 peças: `price`, `price_percent` (reajuste %), `stock_quantity`, `stock_delta`, `status`, `category_id` |
+| GET 🔒 | `/looks/export?formato=xlsx\|csv` | Catálogo inteiro na planilha de importação, com `id`: edite no Excel e importe de volta |
+
+Atualizar em vez de criar: a linha com `id` (vem da exportação) ou com um `codigo` (`looks.sku`) que já existe na loja
+atualiza só as colunas preenchidas. `looks.sku` é criado na subida pelo `core/schema_guard.py`
+(registro em `sql/importacao_em_massa.sql`).
+
 ### Feed (funcionalidade central)
 | Método | Rota                                       | Descrição                                                                     |
 |--------|--------------------------------------------|-------------------------------------------------------------------------------|

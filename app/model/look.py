@@ -32,6 +32,10 @@ class Look(Base):
     stock_quantity = Column(Integer, nullable=False, server_default="0")
     # Tamanhos disponíveis (ver schemas/look.py: TAMANHOS_VALIDOS). Vazio = não informado.
     sizes = Column(ARRAY(String), nullable=False, server_default="{}")
+    # Código da peça definido pelo lojista (SKU). Opcional; único por loja quando
+    # preenchido (índice parcial uq_looks_seller_sku). É a chave da reimportação
+    # da planilha: linha com código já existente ATUALIZA a peça em vez de criar.
+    sku = Column(String, nullable=True)
     likes_count = Column(Integer, nullable=False, server_default="0")
     saves_count = Column(Integer, nullable=False, server_default="0")
     status = Column(content_status(), nullable=False, server_default="active")

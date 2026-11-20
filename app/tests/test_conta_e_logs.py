@@ -412,7 +412,7 @@ class FakeConn:
         self.executados: list[str] = []
         self.commits = 0
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
         self.executados.append(str(stmt))
         return FakeResultado((1,) if self.coluna_existe else None)
 
@@ -433,7 +433,9 @@ def test_guarda_nao_mexe_na_tabela_quando_a_coluna_existe(monkeypatch):
     monkeypatch.delenv("SCHEMA_GUARD", raising=False)
     conn = FakeConn(coluna_existe=True)
     assert run(schema_guard.garantir_schema(FakeEngine(conn))) is False
-    assert len(conn.executados) == 1 and "information_schema" in conn.executados[0]
+    # uma consulta ao catálogo por coluna vigiada, nenhum DDL
+    assert len(conn.executados) == len(schema_guard.PASSOS)
+    assert all("information_schema" in q for q in conn.executados)
     assert conn.commits == 0
 
 
@@ -443,7 +445,8 @@ def test_guarda_cria_coluna_e_indices_quando_falta(monkeypatch):
     assert run(schema_guard.garantir_schema(FakeEngine(conn))) is True
     ddl = " ".join(conn.executados)
     assert "ADD COLUMN IF NOT EXISTS sizes" in ddl and "idx_looks_sizes" in ddl and "idx_looks_price" in ddl
-    assert conn.commits == 1
+    assert "ADD COLUMN IF NOT EXISTS sku" in ddl and "uq_looks_seller_sku" in ddl
+    assert conn.commits == len(schema_guard.PASSOS)
 
 
 def test_guarda_desligado_por_variavel(monkeypatch):

@@ -10,7 +10,10 @@ router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
 
 @router.post("/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("20/minute")
+# 60/min: a importação em massa envia as fotos citadas por nome de arquivo uma a
+# uma (com 20/min, 300 fotos levavam 15 minutos). Continua exigindo login e
+# validando cada imagem pelos bytes.
+@limiter.limit("60/minute")
 async def enviar_imagem(
     request: Request,
     user_id: UUID = Depends(get_current_user_id),
