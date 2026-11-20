@@ -12,8 +12,12 @@ A taxa é calculada e CONGELADA em cada `order_items` quando o pagamento é
 aprovado (webhook). Mudar a regra depois nunca altera vendas passadas.
 
 Hoje todo pagamento cai na conta Mercado Pago da plataforma (Checkout Pro com
-um só Access Token); `seller_net_amount` é quanto a plataforma deve repassar
-para a loja, e `payout_status` marca se o repasse já foi feito.
+um só Access Token), e é ela quem paga a tarifa do MP. Por isso o repasse é:
+
+    seller_net_amount = subtotal - taxa da plataforma - parte da peça na tarifa do MP
+
+(a tarifa do pagamento é rateada pelas peças, proporcional ao subtotal).
+`payout_status` marca se o repasse já foi feito.
 """
 import logging
 from dataclasses import dataclass
@@ -74,11 +78,28 @@ def taxa_em(regra: Regra, loja_criada_em: datetime | None, quando: datetime) -> 
     return Taxa(Decimal(regra.fee_percent), "padrao", fim_carencia)
 
 
-def dividir(subtotal: Decimal, percent: Decimal) -> tuple[Decimal, Decimal]:
-    """(taxa, líquido da loja), em centavos. A taxa arredonda meio centavo para cima."""
+def dividir(subtotal: Decimal, percent: Decimal, tarifa_mp: Decimal | None = None) -> tuple[Decimal, Decimal]:
+    """(taxa da plataforma, líquido da loja), em centavos. A taxa arredonda meio
+    centavo para cima; o líquido desconta também a parte da tarifa do MP."""
     subtotal = Decimal(subtotal)
     taxa = (subtotal * Decimal(percent) / 100).quantize(CENTAVO, rounding=ROUND_HALF_UP)
-    return taxa, subtotal - taxa
+    return taxa, subtotal - taxa - Decimal(tarifa_mp or 0)
+
+
+def ratear(total: Decimal, pesos: list[Decimal]) -> list[Decimal]:
+    """Divide `total` em centavos proporcional aos `pesos`; a sobra de
+    arredondamento vai para a última parte, então a soma bate exatamente."""
+    total = Decimal(total)
+    soma = sum((Decimal(p) for p in pesos), Decimal("0"))
+    if not pesos:
+        return []
+    if soma <= 0:
+        partes = [Decimal("0.00")] * len(pesos)
+        partes[-1] = total.quantize(CENTAVO)
+        return partes
+    partes = [(total * Decimal(p) / soma).quantize(CENTAVO, rounding=ROUND_HALF_UP) for p in pesos[:-1]]
+    partes.append((total - sum(partes, Decimal("0"))).quantize(CENTAVO))
+    return partes
 
 
 async def _linha(db: AsyncSession, travar: bool = False) -> PlatformFeeConfig | None:
@@ -157,6 +178,7 @@ async def repasses_pendentes(db: AsyncSession) -> list[dict]:
                 func.count(OrderItems.id),
                 func.coalesce(func.sum(OrderItems.subtotal), 0),
                 func.coalesce(func.sum(OrderItems.platform_fee_amount), 0),
+                func.coalesce(func.sum(OrderItems.mp_fee_amount), 0),
                 func.coalesce(func.sum(func.coalesce(OrderItems.seller_net_amount, OrderItems.subtotal)), 0),
             )
             .select_from(OrderItems)
@@ -169,8 +191,8 @@ async def repasses_pendentes(db: AsyncSession) -> list[dict]:
         )
     ).all()
     return [
-        {"seller_id": str(s), "store_name": n, "items": int(q), "gross": g, "fees": f, "net": l}
-        for s, n, q, g, f, l in linhas
+        {"seller_id": str(s), "store_name": n, "items": int(q), "gross": g, "fees": f, "mp_fees": m, "net": l}
+        for s, n, q, g, f, m, l in linhas
     ]
 
 
@@ -200,18 +222,26 @@ async def marcar_repasse_pago(db: AsyncSession, seller_id: UUID, admin_profile_i
 
 # ── venda aprovada (webhook) ──────────────────────────────────────────────────
 
-def aplicar_no_item(item: OrderItems, regra: Regra, loja_criada_em: datetime | None, quando: datetime) -> Taxa:
+def aplicar_no_item(
+    item: OrderItems, regra: Regra, loja_criada_em: datetime | None, quando: datetime,
+    tarifa_mp: Decimal | None = None,
+) -> Taxa:
     taxa = taxa_em(regra, loja_criada_em, quando)
-    valor, liquido = dividir(item.subtotal, taxa.percent)
+    valor, liquido = dividir(item.subtotal, taxa.percent, tarifa_mp)
     item.platform_fee_percent = taxa.percent
     item.platform_fee_amount = valor
+    item.mp_fee_amount = tarifa_mp
     item.seller_net_amount = liquido
     item.fee_rule = taxa.fase
     return taxa
 
 
-async def congelar_taxas(db: AsyncSession, itens: list[tuple[OrderItems, UUID | None]], quando: datetime) -> None:
-    """Grava a taxa em cada peça do pedido aprovado. `itens` = [(item, seller_id)].
+async def congelar_taxas(
+    db: AsyncSession, itens: list[tuple[OrderItems, UUID | None]], quando: datetime,
+    tarifa_mp: Decimal | None = None,
+) -> None:
+    """Grava a taxa em cada peça do pedido aprovado. `itens` = [(item, seller_id)];
+    `tarifa_mp` = tarifa do Mercado Pago no pagamento inteiro (rateada aqui).
 
     Num SAVEPOINT e sem deixar o erro subir: a taxa nunca pode impedir um
     pagamento aprovado de ser registrado. Se falhar, a peça fica sem taxa
@@ -224,25 +254,41 @@ async def congelar_taxas(db: AsyncSession, itens: list[tuple[OrderItems, UUID | 
                 if sid is not None and sid not in criada_em:
                     loja = await db.get(Seller, sid)
                     criada_em[sid] = loja.created_at if loja else None
-            for item, sid in itens:
-                aplicar_no_item(item, regra, criada_em.get(sid), quando)
+            partes = (
+                ratear(tarifa_mp, [i.subtotal or Decimal("0") for i, _ in itens])
+                if tarifa_mp is not None else [None] * len(itens)
+            )
+            for (item, sid), parte in zip(itens, partes):
+                aplicar_no_item(item, regra, criada_em.get(sid), quando, parte)
     except Exception:  # noqa: BLE001
         logger.warning("Não foi possível gravar a taxa da plataforma do pedido", exc_info=True)
 
 
-def taxa_do_item(item, regra: Regra, loja_criada_em: datetime | None, pedido_em: datetime) -> tuple[Decimal, Decimal, Decimal, str]:
-    """(percentual, taxa, líquido, fase) de uma peça vendida: o que foi gravado na
-    aprovação ou, se não houver, a regra atual aplicada na data do pedido."""
+@dataclass(frozen=True)
+class TaxaItem:
+    percent: Decimal
+    taxa: Decimal  # taxa da plataforma
+    tarifa_mp: Decimal | None  # parte da tarifa do Mercado Pago (None = não informada)
+    liquido: Decimal  # a repassar para a loja
+    fase: str
+
+
+def taxa_do_item(item, regra: Regra, loja_criada_em: datetime | None, pedido_em: datetime) -> TaxaItem:
+    """Taxas e líquido de uma peça vendida: o que foi gravado na aprovação ou,
+    se não houver, a regra atual aplicada na data do pedido."""
+    tarifa = getattr(item, "mp_fee_amount", None)
+    tarifa = Decimal(tarifa) if tarifa is not None else None
     if item.platform_fee_percent is not None and item.seller_net_amount is not None:
-        return (
+        return TaxaItem(
             Decimal(item.platform_fee_percent),
             Decimal(item.platform_fee_amount or 0),
+            tarifa,
             Decimal(item.seller_net_amount),
             item.fee_rule or "demo",
         )
     t = taxa_em(regra, loja_criada_em, pedido_em)
-    valor, liquido = dividir(item.subtotal or Decimal("0"), t.percent)
-    return t.percent, valor, liquido, t.fase
+    valor, liquido = dividir(item.subtotal or Decimal("0"), t.percent, tarifa)
+    return TaxaItem(t.percent, valor, tarifa, liquido, t.fase)
 
 
 # ── loja ──────────────────────────────────────────────────────────────────────
@@ -262,15 +308,16 @@ def taxa_da_loja(regra: Regra, loja_criada_em: datetime | None, agora: datetime 
     t = taxa_em(regra, loja_criada_em, agora)
     padrao = _pct(regra.fee_percent)
     if t.fase == "demo":
-        msg = "Período de demonstração: taxa de 0%. Você recebe o valor inteiro de cada peça vendida no app."
+        msg = ("Período de demonstração: taxa Lookly de 0%. Você recebe o valor de cada peça vendida no app, "
+               "descontada só a tarifa do Mercado Pago.")
         if regra.demo_ends_at:
             msg += f" A demonstração termina em {_brl(_utc(regra.demo_ends_at))}; depois você ainda tem {regra.grace_days} dias a 0%."
         else:
             msg += f" Quando a demonstração acabar, você ainda terá {regra.grace_days} dias a 0% e depois a taxa será de {padrao}."
     elif t.fase == "carencia":
-        msg = f"Taxa de 0% até {_brl(t.fim_carencia)}. Depois, {padrao} sobre as peças vendidas no app."
+        msg = f"Taxa Lookly de 0% até {_brl(t.fim_carencia)}. Depois, {padrao} sobre as peças vendidas no app."
     else:
-        msg = f"Taxa de {padrao} sobre as peças vendidas no app. Vendas feitas fora do app não pagam taxa."
+        msg = f"Taxa Lookly de {padrao} sobre as peças vendidas no app. Vendas feitas fora do app não pagam taxa."
     return {
         "phase": t.fase,
         "current_percent": t.percent,

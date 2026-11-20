@@ -396,7 +396,7 @@ async def listar_vendas_app(db: AsyncSession, user_id: UUID, situacao: str, limi
     regra = await taxa_svc.regra_atual(db)
     pedidos: dict[UUID, dict] = {}
     for item, pedido, look, nome in linhas:
-        pct, taxa, liquido, fase = taxa_svc.taxa_do_item(item, regra, seller.created_at, pedido.created_at)
+        t = taxa_svc.taxa_do_item(item, regra, seller.created_at, pedido.created_at)
         p = pedidos.setdefault(
             pedido.id,
             {
@@ -409,6 +409,7 @@ async def listar_vendas_app(db: AsyncSession, user_id: UUID, situacao: str, limi
                 "items": [],
                 "total": Decimal("0"),
                 "fee_total": Decimal("0"),
+                "mp_fee_total": Decimal("0"),
                 "net_total": Decimal("0"),
             },
         )
@@ -424,16 +425,18 @@ async def listar_vendas_app(db: AsyncSession, user_id: UUID, situacao: str, limi
                 "fulfillment_status": item.fulfillment_status or "pending",
                 "tracking_code": item.tracking_code,
                 "shipped_at": item.shipped_at,
-                "platform_fee_percent": pct,
-                "platform_fee_amount": taxa,
-                "seller_net_amount": liquido,
-                "fee_rule": fase,
+                "platform_fee_percent": t.percent,
+                "platform_fee_amount": t.taxa,
+                "mp_fee_amount": t.tarifa_mp,
+                "seller_net_amount": t.liquido,
+                "fee_rule": t.fase,
                 "payout_status": item.payout_status or "pending",
             }
         )
         p["total"] += item.subtotal or Decimal("0")
-        p["fee_total"] += taxa
-        p["net_total"] += liquido
+        p["fee_total"] += t.taxa
+        p["mp_fee_total"] += t.tarifa_mp or Decimal("0")
+        p["net_total"] += t.liquido
 
     todos = list(pedidos.values())
     for p in todos:
@@ -570,9 +573,12 @@ async def metricas(db: AsyncSession, user_id: UUID, dias: int) -> dict:
 
     # 2b. Taxa da plataforma sobre as vendas do app no período (congelada em
     # cada peça; peça sem taxa gravada conta como 0%, que é o caso da demo).
-    taxas_app = (
+    taxas_app, tarifas_mp = (
         await db.execute(
-            select(func.coalesce(func.sum(OrderItems.platform_fee_amount), 0))
+            select(
+                func.coalesce(func.sum(OrderItems.platform_fee_amount), 0),
+                func.coalesce(func.sum(OrderItems.mp_fee_amount), 0),
+            )
             .join(Order, Order.id == OrderItems.order_id)
             .join(Look, Look.id == OrderItems.look_id)
             .where(
@@ -581,7 +587,7 @@ async def metricas(db: AsyncSession, user_id: UUID, dias: int) -> dict:
                 _quando_pedido() >= inicio,
             )
         )
-    ).scalar() or Decimal("0")
+    ).one()
     taxa_atual = taxa_svc.taxa_da_loja(await taxa_svc.regra_atual(db), seller.created_at, agora)
 
     # 3. Série diária (dia no horário de Brasília)
@@ -720,8 +726,9 @@ async def metricas(db: AsyncSession, user_id: UUID, dias: int) -> dict:
         "revenue_app": por_canal.get("app", Decimal("0")),
         "revenue_external": sum((v for c, v in por_canal.items() if c != "app"), Decimal("0")),
         "revenue_by_channel": por_canal,
-        "platform_fees": Decimal(taxas_app),
-        "net_revenue_app": por_canal.get("app", Decimal("0")) - Decimal(taxas_app),
+        "platform_fees": Decimal(taxas_app or 0),
+        "mp_fees": Decimal(tarifas_mp or 0),
+        "net_revenue_app": por_canal.get("app", Decimal("0")) - Decimal(taxas_app or 0) - Decimal(tarifas_mp or 0),
         "platform_fee": taxa_atual,
         "gross_profit": (Decimal(receita_com_custo) - Decimal(custo_total)) if receita_com_custo else None,
         "revenue_with_cost": Decimal(receita_com_custo or 0),
