@@ -13,6 +13,7 @@ from .cart_items import CartItems
 from .orders import Order
 from .orders_items import OrderItems
 from .address import Address
+from .stock_movement import StockMovement
 
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "Order",
     "OrderItems",
     "SavedLook",
+    "StockMovement",
     "Seller",
     "SellerPrivate",
     "StoreMember",

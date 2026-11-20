@@ -32,6 +32,13 @@ class Look(Base):
     stock_quantity = Column(Integer, nullable=False, server_default="0")
     # Tamanhos disponíveis (ver schemas/look.py: TAMANHOS_VALIDOS). Vazio = não informado.
     sizes = Column(ARRAY(String), nullable=False, server_default="{}")
+    # Gestão de estoque (sql/gestao_estoque.sql). `reserved_quantity` são unidades
+    # separadas pelo lojista (ex.: cliente do Instagram pediu para guardar): continuam
+    # no estoque, mas não podem ser compradas no app. Disponível = estoque - reservado.
+    reserved_quantity = Column(Integer, nullable=False, server_default="0")
+    cost_price = Column(Numeric(10, 2), nullable=True)  # quanto a peça custou à loja
+    condition = Column(String, nullable=True)  # novo | seminovo | usado | vintage
+    brand = Column(String, nullable=True)
     likes_count = Column(Integer, nullable=False, server_default="0")
     saves_count = Column(Integer, nullable=False, server_default="0")
     status = Column(content_status(), nullable=False, server_default="active")

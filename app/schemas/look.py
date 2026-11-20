@@ -31,6 +31,11 @@ def normalizar_tamanhos(v: list[str] | None) -> list[str] | None:
     return [t for t in TAMANHOS_VALIDOS if t in achados]
 
 
+# Condição da peça — importante para brechó. Espelhado em lookly-front/src/utils/estoque.ts.
+CONDICOES = ["novo", "seminovo", "usado", "vintage"]
+Condicao = Literal["novo", "seminovo", "usado", "vintage"]
+
+
 def _validar_fotos(v: list[str]) -> list[str]:
     if not 1 <= len(v) <= 6:
         raise ValueError("Um look deve ter de 1 a 6 fotos.")
@@ -57,6 +62,9 @@ class LookCreate(BaseModel):
     buy_link: str | None = None
     stock_quantity: int = Field(0, ge=0)
     sizes: list[str] = []
+    cost_price: Decimal | None = Field(None, ge=0)
+    condition: Condicao | None = None
+    brand: str | None = Field(None, max_length=80)
 
     _fotos = field_validator("photos")(_validar_fotos)
     _videos = field_validator("videos")(_validar_videos)
@@ -73,6 +81,9 @@ class LookUpdate(BaseModel):
     buy_link: str | None = None
     stock_quantity: int | None = Field(None, ge=0)
     sizes: list[str] | None = None
+    cost_price: Decimal | None = Field(None, ge=0)
+    condition: Condicao | None = None
+    brand: str | None = Field(None, max_length=80)
 
     _tamanhos = field_validator("sizes")(normalizar_tamanhos)
 
@@ -96,6 +107,9 @@ class LookResponse(BaseModel):
     buy_link: str | None = None
     stock_quantity: int = 0
     sizes: list[str] = []
+    reserved_quantity: int = 0
+    condition: str | None = None
+    brand: str | None = None
     likes_count: int = 0
     saves_count: int = 0
     status: str
@@ -107,6 +121,18 @@ class LookResponse(BaseModel):
 
 class FeedResponse(BaseModel):
     items: list[LookResponse]
+    next_cursor: str | None = None
+
+
+class LookGestaoResponse(LookResponse):
+    """Visão da própria loja: inclui o custo, que NUNCA vai nas respostas públicas
+    (feed, busca, detalhe), só nas rotas de quem gerencia a peça."""
+
+    cost_price: Decimal | None = None
+
+
+class FeedGestaoResponse(BaseModel):
+    items: list[LookGestaoResponse]
     next_cursor: str | None = None
 
 
