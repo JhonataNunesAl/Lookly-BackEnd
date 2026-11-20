@@ -228,6 +228,7 @@ def test_previa_fotos_por_nome_de_arquivo_ficam_pendentes(banco_falso):
     r = previa(f"nome;categoria;fotos\nSaia;Vestidos;saia1.jpg | {FOTO}\nBlusa;Vestidos;blusa.png\nTop;Vestidos;doc.pdf\n")
     saia, blusa, top = r.linhas
     assert saia.erros == [] and saia.fotos_pendentes == ["saia1.jpg"] and saia.dados["photos"] == [FOTO]
+    assert saia.fotos == ["saia1.jpg", FOTO]  # ordem da planilha: a primeira é a capa
     assert blusa.erros == [] and "photos" not in blusa.dados and blusa.fotos_pendentes == ["blusa.png"]
     assert top.erros  # .pdf não é foto
     assert r.arquivos_de_foto == ["saia1.jpg", "blusa.png"]

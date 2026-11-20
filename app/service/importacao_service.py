@@ -304,15 +304,17 @@ def parse_tamanhos(v) -> list[str]:
     return normalizar_tamanhos(partes) or []
 
 
+def parse_fotos_em_ordem(v) -> list[str]:
+    """Fotos da célula, na ordem. Separadores: | ; quebra de linha, ou
+    vírgula/espaço antes de outro link."""
+    partes = re.split(r"[|;\n]+|[,\s]+(?=https?://)", _celula_texto(v))
+    return [p.strip() for p in partes if p.strip()]
+
+
 def parse_fotos(v) -> tuple[list[str], list[str]]:
-    """Devolve (links https, nomes de arquivo). Separadores: | ; quebra de linha,
-    ou vírgula/espaço antes de outro link."""
-    texto = _celula_texto(v)
-    partes = re.split(r"[|;\n]+|[,\s]+(?=https?://)", texto)
+    """Devolve (links, nomes de arquivo)."""
     links, arquivos = [], []
-    for p in (p.strip() for p in partes):
-        if not p:
-            continue
+    for p in parse_fotos_em_ordem(v):
         if re.match(r"https?://", p, re.I):
             links.append(p)
         else:
@@ -438,8 +440,10 @@ async def gerar_previa(db: AsyncSession, user_id: UUID, content_type: str | None
             tamanhos = tentar("tamanhos", parse_tamanhos, v.get("sizes"))
             if tamanhos is not None:
                 dados["sizes"] = tamanhos
+        ordem = []
         if _celula_texto(v.get("photos")):
             links, arquivos = parse_fotos(v.get("photos"))
+            ordem = [p for p in parse_fotos_em_ordem(v.get("photos")) if p in links or _nome_arquivo_valido(p)]
             for a in arquivos:
                 if not _nome_arquivo_valido(a):
                     erros.append(f"fotos: {a!r} não é um link https:// nem um arquivo .jpg/.png/.webp")
@@ -453,7 +457,7 @@ async def gerar_previa(db: AsyncSession, user_id: UUID, content_type: str | None
             ids.add(look_id)
         if sku:
             skus.add(sku)
-        convertidas.append((bruta, dados, erros, arquivos, look_id))
+        convertidas.append((bruta, dados, erros, arquivos, look_id, ordem))
 
     existentes = await _existentes(db, seller.id, ids, skus)
     por_id = {l.id: l for l in existentes}
@@ -461,7 +465,7 @@ async def gerar_previa(db: AsyncSession, user_id: UUID, content_type: str | None
 
     # 2ª passada: decide criar/atualizar e valida as regras
     linhas, vistos_sku, todos_arquivos = [], {}, []
-    for bruta, dados, erros, arquivos, look_id in convertidas:
+    for bruta, dados, erros, arquivos, look_id, ordem in convertidas:
         alvo = None
         if look_id:
             alvo = por_id.get(look_id)
@@ -504,6 +508,7 @@ async def gerar_previa(db: AsyncSession, user_id: UUID, content_type: str | None
             acao=acao,
             look_id=alvo.id if alvo is not None else None,
             dados=dados,
+            fotos=ordem,
             fotos_pendentes=arquivos,
             erros=list(dict.fromkeys(erros)),
         ))

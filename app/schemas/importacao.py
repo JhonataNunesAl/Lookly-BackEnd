@@ -105,6 +105,9 @@ class LinhaPrevia(BaseModel):
     # Campos prontos para `POST /looks/bulk` (fotos por nome de arquivo ficam em
     # `fotos_pendentes` até o app enviá-las e trocar pelos links).
     dados: dict
+    # Todas as fotos na ordem da planilha (links e nomes de arquivo misturados): a
+    # primeira é a capa. O app troca cada nome pelo link enviado, mantendo a ordem.
+    fotos: list[str] = []
     fotos_pendentes: list[str] = []
     erros: list[str] = []
 
