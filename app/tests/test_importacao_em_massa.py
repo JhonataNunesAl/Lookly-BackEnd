@@ -323,6 +323,16 @@ def test_lote_cria_atualiza_e_devolve_erros_sem_travar_as_validas(banco_falso):
     assert set(r.ids) == {novo.id, existente.id}
 
 
+def test_lote_da_um_created_at_diferente_para_cada_peca(banco_falso):
+    """A paginação por data (`created_at < cursor`) perderia peças empatadas."""
+    db = SessaoLote([CAT_VESTIDOS.id])
+    itens = [{"name": f"Peça {i}", "category_id": str(CAT_VESTIDOS.id), "photos": [FOTO]} for i in range(50)]
+    run(svc.gravar_lote(db, uuid4(), LoteRequest(itens=itens)))
+    datas = [l.created_at for l in db.adicionados]
+    assert len(set(datas)) == 50
+    assert datas == sorted(datas, reverse=True)  # 1ª linha = mais recente
+
+
 def test_lote_conflito_no_banco_nao_grava_nada(banco_falso):
     db = SessaoLote([CAT_VESTIDOS.id], falhar_commit=True)
     pedido = LoteRequest(itens=[{"name": "Nova", "category_id": str(CAT_VESTIDOS.id), "photos": [FOTO]}])

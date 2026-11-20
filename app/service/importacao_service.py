@@ -21,7 +21,7 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
@@ -605,6 +605,13 @@ async def gravar_lote(db: AsyncSession, user_id: UUID, pedido: LoteRequest) -> L
             skus_no_lote.add(it.sku)
 
     if novos or atualizados:
+        # Um `created_at` diferente por peça: com o `now()` do banco, o lote inteiro
+        # teria o MESMO instante, e a paginação por data (feed, `/looks/mine`) usa
+        # `created_at < cursor` — as peças empatadas depois da 1ª página sumiriam.
+        # A 1ª linha da planilha fica como a mais recente (aparece primeiro).
+        agora = datetime.now(timezone.utc)
+        for k, look in enumerate(novos):
+            look.created_at = agora - timedelta(microseconds=k)
         db.add_all(novos)
         try:
             await db.flush()
