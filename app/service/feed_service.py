@@ -5,6 +5,7 @@ from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
 from model.signal import LookView
+from model.seller import Seller
 
 
 async def get_feed(
@@ -24,6 +25,8 @@ async def get_feed(
     query = (
         select(Look)
         .where(Look.status == "active")
+        # Loja tirada do ar pela administração: as peças somem junto.
+        .where(Look.seller_id.in_(select(Seller.id).where(Seller.status == "active")))
         .where(~Look.id.in_(seen_subq))
         .order_by(Look.created_at.desc())
     )

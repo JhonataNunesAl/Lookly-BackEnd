@@ -25,6 +25,7 @@ from model.cart_items import CartItems
 from model.look import Look
 from model.orders import Order, OrderStatus, PaymentMethod, PaymentStatus
 from model.orders_items import OrderItems
+from model.seller import Seller
 from schemas.order import CheckoutRequest, CheckoutResponse, OrderItemOut, OrderOut
 from service import inventory_service
 from service import mercadopago_service as mp
@@ -40,7 +41,10 @@ async def checkout(db: AsyncSession, user_id: UUID, dados: CheckoutRequest) -> C
     if cart:
         linhas = (
             await db.execute(
-                select(CartItems, Look).join(Look, Look.id == CartItems.look_id).where(CartItems.cart_id == cart.id)
+                select(CartItems, Look, Seller.status)
+                .join(Look, Look.id == CartItems.look_id)
+                .join(Seller, Seller.id == Look.seller_id)
+                .where(CartItems.cart_id == cart.id)
             )
         ).all()
     if not linhas:
@@ -49,7 +53,9 @@ async def checkout(db: AsyncSession, user_id: UUID, dados: CheckoutRequest) -> C
     total = Decimal("0")
     itens_mp: list[dict] = []
     itens_pedido: list[tuple[Look, int, Decimal]] = []
-    for item, look in linhas:
+    for item, look, status_loja in linhas:
+        if status_loja != "active":
+            raise HTTPException(status_code=400, detail=f'"{look.name}" não está mais disponível.')
         if look.price is None:
             raise HTTPException(status_code=400, detail=f'"{look.name}" está sem preço e não pode ser comprado.')
         if look.status != "active":

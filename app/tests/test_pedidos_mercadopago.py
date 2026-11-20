@@ -97,7 +97,7 @@ def _look(**kw):
 def test_checkout_sem_estoque_400():
     cart = SimpleNamespace(id=uuid4())
     item = SimpleNamespace(quantity=3)
-    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(item, _look(stock_quantity=1))]))
+    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(item, _look(stock_quantity=1), "active")]))
     with pytest.raises(HTTPException) as e:
         run(order_service.checkout(db, uuid4(), CheckoutRequest(address=ENDERECO)))
     assert e.value.status_code == 400
@@ -107,7 +107,7 @@ def test_checkout_sem_estoque_400():
 def test_checkout_cria_pedido_e_devolve_url():
     cart = SimpleNamespace(id=uuid4())
     look = _look()
-    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=2), look)]))
+    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=2), look, "active")]))
     with patch.object(mp, "criar_preferencia", AsyncMock(return_value=("PREF123", "https://mp/pagar"))) as criar:
         r = run(order_service.checkout(db, uuid4(), CheckoutRequest(address=ENDERECO)))
     assert r.total == Decimal("318.00")
@@ -187,10 +187,18 @@ def test_historico_falhando_nao_impede_o_pagamento():
 
 def test_checkout_respeita_reserva_da_loja():
     cart = SimpleNamespace(id=uuid4())
-    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=1), _look(stock_quantity=2, reserved_quantity=2))]))
+    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=1), _look(stock_quantity=2, reserved_quantity=2), "active")]))
     with pytest.raises(HTTPException) as e:
         run(order_service.checkout(db, uuid4(), CheckoutRequest(address=ENDERECO)))
     assert e.value.status_code == 400 and "restam 0" in e.value.detail
+
+
+def test_checkout_recusa_peca_de_loja_tirada_do_ar():
+    cart = SimpleNamespace(id=uuid4())
+    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=1), _look(), "under_review")]))
+    with pytest.raises(HTTPException) as e:
+        run(order_service.checkout(db, uuid4(), CheckoutRequest(address=ENDERECO)))
+    assert e.value.status_code == 400 and "não está mais disponível" in e.value.detail
 
 
 def test_notificacao_repetida_nao_baixa_estoque_de_novo():

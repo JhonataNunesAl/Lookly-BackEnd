@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
 from model.orders_items import OrderItems
+from model.seller import Seller
 from schemas.look import LookCreate, LookUpdate, LookFiltros
 from service import seller_service, inventory_service
 
@@ -111,7 +112,10 @@ async def search_looks(
     pedidos; estoque filtra `stock_quantity > 0`.
     """
     filtros = filtros or LookFiltros()
-    query = select(Look).where(Look.status == "active")
+    query = select(Look).where(Look.status == "active").where(
+        # Loja tirada do ar pela administração: as peças somem da busca também.
+        Look.seller_id.in_(select(Seller.id).where(Seller.status == "active"))
+    )
 
     if q:
         termo = f"%{q}%"
