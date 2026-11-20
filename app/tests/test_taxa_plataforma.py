@@ -208,7 +208,7 @@ def test_mensagem_da_loja_por_fase():
 
 
 def test_guarda_de_schema_tem_o_passo_da_taxa():
-    passo = schema_guard.PASSOS[-1]
+    passo = next(p for p in schema_guard.PASSOS if p.nome.startswith("taxa da plataforma"))
     assert "order_items" in passo.existe and "payout_status" in passo.existe
     sql = " ".join(passo.ddl)
     assert "platform_fee_config" in sql and "seller_net_amount" in sql and "fee_rule = 'demo'" in sql

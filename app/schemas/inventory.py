@@ -27,6 +27,7 @@ class ItemEstoque(LookGestaoResponse):
     revenue: Decimal = Decimal("0")
     last_sale_at: datetime | None = None
     days_without_sale: int | None = None
+    collection_ids: list[UUID] = []
 
 
 class ItensEstoqueResponse(BaseModel):
@@ -212,3 +213,37 @@ class Metricas(BaseModel):
     top_sold: list[PecaMetrica]
     top_viewed: list[PecaMetrica]
     stale: list[PecaMetrica]
+
+
+# ── coleções da loja ──────────────────────────────────────────────────────────
+
+class ColecaoCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str | None = Field(None, max_length=280)
+
+
+class ColecaoUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=60)
+    description: str | None = Field(None, max_length=280)
+    sort_order: int | None = None
+
+
+class ColecaoOut(BaseModel):
+    id: UUID
+    name: str
+    description: str | None = None
+    sort_order: int = 0
+    item_count: int = 0
+    # Até 3 capas das peças, para a miniatura da coleção.
+    covers: list[str] = []
+    created_at: datetime | None = None
+
+
+class ColecaoPecas(BaseModel):
+    look_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class ColecoesDaPeca(BaseModel):
+    """Define em quais coleções a peça está (substitui a lista inteira)."""
+
+    collection_ids: list[UUID] = Field(default_factory=list, max_length=100)

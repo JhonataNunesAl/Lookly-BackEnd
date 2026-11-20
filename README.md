@@ -219,6 +219,11 @@ Toda mudança de estoque vira uma linha em `stock_movements`. Migração: `sql/g
 | PATCH 🔒  | `/inventory/sales/{order_id}`          | Marca as peças da loja como `shipped`/`delivered` (+ código de rastreio); o pedido acompanha quando todas as lojas enviaram |
 | GET 🔒    | `/inventory/metrics?days=7\|30\|90\|365` | Faturamento (app + externo, por canal), vendas, ticket médio, lucro bruto (peças com custo), série diária, valor em estoque, giro, tempo até vender, peças paradas, visualizações e mais vistas |
 
+**Coleções da loja** (conjuntos com nome livre, ex.: "Roupas sessão de carnaval"; diferentes das coleções do armário de quem compra):
+`GET/POST /inventory/collections`, `PATCH/DELETE /inventory/collections/{id}`, `POST /inventory/collections/{id}/items` (`look_ids`),
+`DELETE /inventory/collections/{id}/items/{look_id}`, `PUT /inventory/items/{look_id}/collections` (define as coleções da peça) e o filtro
+`collection_id` em `/inventory/items`. Apagar uma coleção não apaga as peças.
+
 O custo (`cost_price`) só aparece nas rotas da própria loja (`/looks/mine`, criar/editar look e `/inventory/*`), nunca no feed, busca ou detalhe público.
 Uma peça com pedido no app não pode ser apagada (409): o `order_items` apagaria junto o item do pedido de quem comprou. Pause a peça.
 
