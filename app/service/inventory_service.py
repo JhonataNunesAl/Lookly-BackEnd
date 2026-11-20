@@ -28,6 +28,7 @@ from model.profile import Profile
 from model.seller import Seller, StoreMember
 from model.signal import LookView
 from model.stock_movement import StockMovement
+from model.store_collection import StoreCollectionItem
 from schemas.inventory import EnvioUpdate, MovimentoCreate, OrdemItens, Situacao
 
 logger = logging.getLogger(__name__)
@@ -279,7 +280,21 @@ def _condicoes_situacao(agg, agora: datetime):
     }
 
 
-async def _contagens(db, seller_id, agg, conds, q, category_id) -> dict[str, int]:
+def _no_recorte(consulta, q, category_id, collection_id):
+    """Busca, categoria e coleção: o mesmo recorte para a lista e para os chips."""
+    if q:
+        termo = f"%{q.strip()}%"
+        consulta = consulta.where(or_(Look.name.ilike(termo), Look.description.ilike(termo), Look.brand.ilike(termo)))
+    if category_id is not None:
+        consulta = consulta.where(Look.category_id == category_id)
+    if collection_id is not None:
+        consulta = consulta.where(
+            Look.id.in_(select(StoreCollectionItem.look_id).where(StoreCollectionItem.collection_id == collection_id))
+        )
+    return consulta
+
+
+async def _contagens(db, seller_id, agg, conds, q, category_id, collection_id=None) -> dict[str, int]:
     colunas = [
         (func.count().filter(cond) if cond is not None else func.count()).label(nome)
         for nome, cond in conds.items()
@@ -287,11 +302,7 @@ async def _contagens(db, seller_id, agg, conds, q, category_id) -> dict[str, int
     consulta = select(*colunas).select_from(Look).outerjoin(agg, agg.c.look_id == Look.id).where(
         Look.seller_id == seller_id
     )
-    if q:
-        termo = f"%{q.strip()}%"
-        consulta = consulta.where(or_(Look.name.ilike(termo), Look.description.ilike(termo), Look.brand.ilike(termo)))
-    if category_id is not None:
-        consulta = consulta.where(Look.category_id == category_id)
+    consulta = _no_recorte(consulta, q, category_id, collection_id)
     linha = (await db.execute(consulta)).one()
     return {nome: int(linha._mapping[nome] or 0) for nome in conds}
 
@@ -318,6 +329,7 @@ async def listar_itens(
     q: str | None = None,
     situacao: Situacao = "todos",
     category_id: UUID | None = None,
+    collection_id: UUID | None = None,
     sort: OrdemItens = "recentes",
     limit: int = 30,
     offset: int = 0,
@@ -330,14 +342,10 @@ async def listar_itens(
     base = select(Look, agg.c.units, agg.c.valor, agg.c.ultima).outerjoin(agg, agg.c.look_id == Look.id).where(
         Look.seller_id == seller.id
     )
-    if q:
-        termo = f"%{q.strip()}%"
-        base = base.where(or_(Look.name.ilike(termo), Look.description.ilike(termo), Look.brand.ilike(termo)))
-    if category_id is not None:
-        base = base.where(Look.category_id == category_id)
+    base = _no_recorte(base, q, category_id, collection_id)
 
-    # Contagem por situação sobre o mesmo recorte (busca/categoria), para os chips.
-    counts = await _contagens(db, seller.id, agg, conds, q, category_id)
+    # Contagem por situação sobre o mesmo recorte (busca/categoria/coleção), para os chips.
+    counts = await _contagens(db, seller.id, agg, conds, q, category_id, collection_id)
 
     filtrada = base
     if conds.get(situacao) is not None:
@@ -360,6 +368,25 @@ async def listar_itens(
                 "days_without_sale": (agora - ref).days if ref else None,
             }
         )
+    # Em quais coleções da loja cada peça da página está (tolerante: sem a tabela
+    # ainda, a lista sai sem essa informação em vez de falhar).
+    try:
+        async with db.begin_nested():
+            por_peca = (
+                await db.execute(
+                    select(StoreCollectionItem.look_id, StoreCollectionItem.collection_id).where(
+                        StoreCollectionItem.look_id.in_([i["id"] for i in itens])
+                    )
+                )
+            ).all() if itens else []
+    except Exception:  # noqa: BLE001
+        logger.warning("Coleções da loja indisponíveis na listagem do estoque", exc_info=True)
+        por_peca = []
+    mapa: dict = {}
+    for look_id, cid in por_peca:
+        mapa.setdefault(look_id, []).append(cid)
+    for i in itens:
+        i["collection_ids"] = mapa.get(i["id"], [])
     proximo = offset + limit if offset + limit < total else None
     return {"items": itens, "total": total, "next_offset": proximo, "counts": counts}
 
