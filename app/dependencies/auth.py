@@ -41,3 +41,19 @@ def get_current_user_id_optional(
         return UUID(payload["sub"])
     except (KeyError, ValueError):
         return None
+
+
+def get_token_payload(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> dict:
+    """Payload inteiro do JWT já validado (para quem precisa de mais que o `sub`,
+    como a checagem de administrador em dependencies/admin.py)."""
+    payload = verify_supabase_token(credentials.credentials)
+    try:
+        UUID(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token sem identificação de usuário válida",
+        )
+    return payload
