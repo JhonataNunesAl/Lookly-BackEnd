@@ -412,7 +412,7 @@ class FakeConn:
         self.executados: list[str] = []
         self.commits = 0
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
         self.executados.append(str(stmt))
         return FakeResultado((1,) if self.coluna_existe else None)
 
@@ -445,6 +445,7 @@ def test_guarda_cria_coluna_e_indices_quando_falta(monkeypatch):
     assert run(schema_guard.garantir_schema(FakeEngine(conn))) is True
     ddl = " ".join(conn.executados)
     assert "ADD COLUMN IF NOT EXISTS sizes" in ddl and "idx_looks_sizes" in ddl and "idx_looks_price" in ddl
+    assert "ADD COLUMN IF NOT EXISTS sku" in ddl and "uq_looks_seller_sku" in ddl
     assert "reserved_quantity" in ddl and "fulfillment_status" in ddl and "stock_movements" in ddl
     assert "lock_timeout" in ddl
     assert conn.commits == len(schema_guard.PASSOS)

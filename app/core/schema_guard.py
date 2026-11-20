@@ -1,6 +1,6 @@
 """Garante, na subida do app, as colunas/tabelas que o código novo lê.
 
-Por quê: o modelo mapeia colunas novas (ex.: `looks.sizes`, `looks.reserved_quantity`).
+Por quê: o modelo mapeia colunas novas (ex.: `looks.sizes`, `looks.sku`, `looks.reserved_quantity`).
 Se o deploy sair ANTES de alguém rodar o SQL no Supabase, TODA consulta a `looks`
 (feed, busca, carrinho) falha com 500. Este guarda remove a ordem de deploy da
 equação: para cada passo, se a coluna/tabela já existe, só lê o catálogo (sem lock);
@@ -49,6 +49,20 @@ PASSOS: tuple[Passo, ...] = (
             "WHERE status = 'active' AND price IS NOT NULL",
         ),
         registro="sql/filtros_busca.sql",
+    ),
+    Passo(
+        nome="looks.sku (código da peça, importação em massa)",
+        existe=_coluna("looks", "sku"),
+        ddl=(
+            "ALTER TABLE public.looks ADD COLUMN IF NOT EXISTS sku text",
+            "DO $$ BEGIN "
+            "ALTER TABLE public.looks ADD CONSTRAINT looks_sku_len "
+            "CHECK (sku IS NULL OR char_length(sku) BETWEEN 1 AND 60); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_looks_seller_sku "
+            "ON public.looks (seller_id, sku) WHERE sku IS NOT NULL",
+        ),
+        registro="sql/importacao_em_massa.sql",
     ),
     Passo(
         nome="looks: reserva, custo, condição e marca",

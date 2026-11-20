@@ -48,6 +48,21 @@ def _validar_videos(v: list[str] | None) -> list[str] | None:
     return v
 
 
+SKU_MAX = 60
+
+
+def normalizar_sku(v: str | None) -> str | None:
+    """Código da peça: sem espaços nas pontas; vazio vira None (sem código)."""
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if len(v) > SKU_MAX:
+        raise ValueError(f"O código da peça tem no máximo {SKU_MAX} caracteres.")
+    return v
+
+
 class LookCreate(BaseModel):
     category_id: UUID  # categoria obrigatória
     # min/max espelham o CHECK de public.looks.name em nem_schema.sql —
@@ -62,6 +77,7 @@ class LookCreate(BaseModel):
     buy_link: str | None = None
     stock_quantity: int = Field(0, ge=0)
     sizes: list[str] = []
+    sku: str | None = None
     cost_price: Decimal | None = Field(None, ge=0)
     condition: Condicao | None = None
     brand: str | None = Field(None, max_length=80)
@@ -69,6 +85,7 @@ class LookCreate(BaseModel):
     _fotos = field_validator("photos")(_validar_fotos)
     _videos = field_validator("videos")(_validar_videos)
     _tamanhos = field_validator("sizes")(normalizar_tamanhos)
+    _sku = field_validator("sku")(normalizar_sku)
 
 
 class LookUpdate(BaseModel):
@@ -81,11 +98,13 @@ class LookUpdate(BaseModel):
     buy_link: str | None = None
     stock_quantity: int | None = Field(None, ge=0)
     sizes: list[str] | None = None
+    sku: str | None = None
     cost_price: Decimal | None = Field(None, ge=0)
     condition: Condicao | None = None
     brand: str | None = Field(None, max_length=80)
 
     _tamanhos = field_validator("sizes")(normalizar_tamanhos)
+    _sku = field_validator("sku")(normalizar_sku)
 
     @field_validator("photos")
     @classmethod
@@ -107,6 +126,7 @@ class LookResponse(BaseModel):
     buy_link: str | None = None
     stock_quantity: int = 0
     sizes: list[str] = []
+    sku: str | None = None
     reserved_quantity: int = 0
     condition: str | None = None
     brand: str | None = None

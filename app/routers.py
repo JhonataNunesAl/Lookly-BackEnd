@@ -4,6 +4,7 @@ from controller import (
     body_profile_controller,
     seller_controller,
     category_controller,
+    look_bulk_controller,
     look_controller,
     feed_controller,
     swipe_controller,
@@ -23,6 +24,8 @@ router.include_router(profile_controller.router)
 router.include_router(body_profile_controller.router)
 router.include_router(seller_controller.router)
 router.include_router(category_controller.router)
+# antes do look_controller: /looks/export não pode cair em /looks/{look_id}
+router.include_router(look_bulk_controller.router)
 router.include_router(look_controller.router)
 router.include_router(feed_controller.router)
 router.include_router(swipe_controller.router)

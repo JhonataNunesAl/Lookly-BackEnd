@@ -62,6 +62,8 @@ app.add_middleware(
     allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
+    # O site lê o nome do arquivo baixado (modelo/exportação da planilha).
+    expose_headers=["Content-Disposition", "X-Request-ID"],
 )
 
 # Rotas
