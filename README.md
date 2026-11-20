@@ -50,7 +50,7 @@ diretamente.
 ├── iniciar.sh              # sobe a API local (cd app + uvicorn --host 0.0.0.0)
 ├── schema.sql / nem_schema.sql   # esquema do banco (rodar no Supabase) — fonte de verdade
 ├── migrations/ + alembic.ini     # histórico Alembic (o banco vivo tem mudanças fora dele — ver CLAUDE.md)
-├── sql/                    # scripts avulsos para o SQL Editor do Supabase (partições de look_views, fotos de exemplo, `filtros_busca.sql` = coluna de tamanhos)
+├── sql/                    # scripts avulsos para o SQL Editor do Supabase (partições de look_views, fotos de exemplo, `filtros_busca.sql` = coluna de tamanhos, `gestao_estoque.sql` = estoque/vendas)
 ├── CART_ISSUES.md          # histórico dos problemas do carrinho (e o que foi resolvido)
 └── app/                    # TODO o código roda de dentro daqui (imports absolutos)
     ├── main.py             # ponto de entrada (FastAPI app, CORS, rate limit, logging)
@@ -67,7 +67,7 @@ diretamente.
     ├── controller/         # rotas por domínio (profile, body_profile, seller, category, look, feed,
     │                       # swipe, wardrobe, report, cart, cart_items, upload)
     ├── service/            # regras de negócio e queries assíncronas
-    └── tests/              # 176 testes, sem banco nem rede (cd app && python -m pytest tests -q)
+    └── tests/              # 210 testes, sem banco nem rede (cd app && python -m pytest tests -q)
 ```
 
 ---
@@ -202,6 +202,25 @@ sem rotas).
 | Método | Rota           | Descrição                                                                                      |
 |--------|----------------|------------------------------------------------------------------------------------------------|
 | POST   | `/logs/client` | O app envia lotes (1–20) de erros/exceções; viram uma linha JSON por entrada no log do servidor (logger `client`). Token opcional (sem token, sem id de usuário). Máx. 64 KB, 30/min; segredos e dados pessoais são removidos antes de gravar |
+
+### Gestão de estoque da loja
+Para o lojista (dono ou membro owner/manager). Vendas no app (pedidos pagos) e vendas
+registradas fora dele (Instagram, WhatsApp, loja física) entram juntas nas métricas.
+Toda mudança de estoque vira uma linha em `stock_movements`. Migração: `sql/gestao_estoque.sql`
+(aplicada sozinha na subida pelo `core/schema_guard.py`).
+
+| Método    | Rota                                   | Descrição |
+|-----------|----------------------------------------|-----------|
+| GET 🔒    | `/inventory/items`                     | Peças da loja com disponível (estoque − reservado), vendidas, faturamento e dias sem vender. Filtros `q`, `situacao` (todos, disponivel, acabando, esgotado, reservado, pausado, parado), `category_id`, `sort`, `limit`/`offset`; devolve `counts` por situação |
+| POST 🔒   | `/inventory/items/{id}/movements`      | `entrada`, `venda_externa` (com `unit_price`/`channel`), `ajuste` (novo total contado), `perda`, `devolucao`, `reserva`, `liberacao` |
+| PATCH 🔒  | `/inventory/items/{id}/status`         | Pausar (`draft`) ou reativar (`active`) |
+| GET 🔒    | `/inventory/movements`                 | Histórico (filtros `look_id`, `kind`; cursor por data) |
+| GET 🔒    | `/inventory/sales`                     | Pedidos pagos com peças da loja, para enviar (`situacao` = pending, shipped, delivered) |
+| PATCH 🔒  | `/inventory/sales/{order_id}`          | Marca as peças da loja como `shipped`/`delivered` (+ código de rastreio); o pedido acompanha quando todas as lojas enviaram |
+| GET 🔒    | `/inventory/metrics?days=7\|30\|90\|365` | Faturamento (app + externo, por canal), vendas, ticket médio, lucro bruto (peças com custo), série diária, valor em estoque, giro, tempo até vender, peças paradas, visualizações e mais vistas |
+
+O custo (`cost_price`) só aparece nas rotas da própria loja (`/looks/mine`, criar/editar look e `/inventory/*`), nunca no feed, busca ou detalhe público.
+Uma peça com pedido no app não pode ser apagada (409): o `order_items` apagaria junto o item do pedido de quem comprou. Pause a peça.
 
 ### Denúncias (moderação)
 | Método | Rota        | Descrição                                          |

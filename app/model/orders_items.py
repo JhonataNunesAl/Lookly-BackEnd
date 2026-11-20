@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, Numeric, DateTime, func, UUID
+from sqlalchemy import ForeignKey, Integer, Numeric, DateTime, String, func, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -50,6 +50,14 @@ class OrderItems(Base):
         server_default=func.now(),
         nullable=False
     )
+
+    # Envio, por item: um pedido pode ter peças de lojas diferentes e cada loja
+    # despacha as suas (sql/gestao_estoque.sql). pending | shipped | delivered
+    fulfillment_status: Mapped[str] = mapped_column(
+        String, nullable=False, server_default="pending"
+    )
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tracking_code: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relacionamentos
     order = relationship("Order", back_populates="items")

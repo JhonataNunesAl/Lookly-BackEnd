@@ -299,7 +299,8 @@ class SessaoLote:
 
 
 def test_lote_cria_atualiza_e_devolve_erros_sem_travar_as_validas(banco_falso):
-    existente = SimpleNamespace(id=uuid4(), sku="BR-01", price=Decimal("10"), stock_quantity=3, name="Antiga")
+    existente = SimpleNamespace(id=uuid4(), sku="BR-01", price=Decimal("10"), stock_quantity=3, name="Antiga",
+                                reserved_quantity=2, seller_id=LOJA.id, cost_price=None)
     banco_falso.existentes = [existente]
     db = SessaoLote([CAT_VESTIDOS.id])
     pedido = LoteRequest(status="draft", itens=[
@@ -321,6 +322,11 @@ def test_lote_cria_atualiza_e_devolve_erros_sem_travar_as_validas(banco_falso):
     assert existente.name == "Antiga"  # campo não enviado não muda
     assert db.commits == 1
     assert set(r.ids) == {novo.id, existente.id}
+    # histórico de estoque: entrada da peça nova e ajuste da existente (reserva cortada)
+    from model.stock_movement import StockMovement
+    movs = [o for o in db.adicionados if isinstance(o, StockMovement)]
+    assert sorted((m.kind, m.quantity) for m in movs) == [("ajuste", -3), ("entrada", 1)]
+    assert existente.reserved_quantity == 0
 
 
 def test_lote_da_um_created_at_diferente_para_cada_peca(banco_falso):
@@ -328,7 +334,8 @@ def test_lote_da_um_created_at_diferente_para_cada_peca(banco_falso):
     db = SessaoLote([CAT_VESTIDOS.id])
     itens = [{"name": f"Peça {i}", "category_id": str(CAT_VESTIDOS.id), "photos": [FOTO]} for i in range(50)]
     run(svc.gravar_lote(db, uuid4(), LoteRequest(itens=itens)))
-    datas = [l.created_at for l in db.adicionados]
+    from model.look import Look
+    datas = [l.created_at for l in db.adicionados if isinstance(l, Look)]
     assert len(set(datas)) == 50
     assert datas == sorted(datas, reverse=True)  # 1ª linha = mais recente
 
@@ -357,15 +364,21 @@ def test_campos_da_gestao_de_estoque_so_gravam_se_o_modelo_tiver(banco_falso):
 
 # ── edição em massa ───────────────────────────────────────────────────────────
 
-class SessaoCaptura:
-    def __init__(self, rowcount):
+class SessaoEdicao:
+    """Devolve as peças "da loja" para o SELECT ... FOR UPDATE e guarda o resto."""
+
+    def __init__(self, looks):
+        self.looks = looks
         self.query = None
-        self.rowcount = rowcount
+        self.adicionados = []
         self.commits = 0
 
     async def execute(self, query):
         self.query = query
-        return SimpleNamespace(rowcount=self.rowcount)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(self.looks)))
+
+    def add(self, obj):
+        self.adicionados.append(obj)
 
     async def commit(self):
         self.commits += 1
@@ -376,23 +389,33 @@ def sql(q) -> str:
     return str(q.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
 
 
+def peca(**kw):
+    base = dict(id=uuid4(), seller_id=LOJA.id, name="Peça", price=Decimal("100.00"), stock_quantity=5,
+                reserved_quantity=0, cost_price=None, status="active", category_id=CAT_VESTIDOS.id)
+    return SimpleNamespace(**(base | kw))
+
+
 def test_edicao_em_massa_reajuste_e_soma_de_estoque(banco_falso):
-    ids = [uuid4(), uuid4(), uuid4()]
-    db = SessaoCaptura(rowcount=2)
-    r = run(svc.editar_em_massa(db, uuid4(), EdicaoEmMassa(ids=ids, price_percent=Decimal("-20"), stock_delta=-3)))
+    a, b = peca(price=Decimal("89.90"), stock_quantity=5, reserved_quantity=4), peca(price=None, stock_quantity=1)
+    db = SessaoEdicao([a, b])
+    r = run(svc.editar_em_massa(db, uuid4(), EdicaoEmMassa(ids=[a.id, b.id, uuid4()], price_percent=Decimal("-20"), stock_delta=-3)))
     texto = sql(db.query)
-    assert "round(looks.price * 0.8, 2)" in texto
-    assert "greatest(looks.stock_quantity + -3, 0)" in texto
     assert f"looks.seller_id = '{LOJA.id}'" in texto  # só peças da própria loja
     assert "looks.status IN ('active', 'draft')" in texto  # moderação não é mexida
+    assert "FOR UPDATE" in texto
+    assert a.price == Decimal("71.92") and b.price is None
+    assert (a.stock_quantity, a.reserved_quantity) == (2, 2)  # reserva cortada
+    assert b.stock_quantity == 0  # nunca abaixo de zero
+    assert sorted((m.kind, m.quantity) for m in db.adicionados) == [("ajuste", -3), ("ajuste", -1)]
     assert (r.atualizados, r.ignorados) == (2, 1) and db.commits == 1
 
 
 def test_edicao_em_massa_valores_fixos(banco_falso):
-    db = SessaoCaptura(rowcount=1)
-    run(svc.editar_em_massa(db, uuid4(), EdicaoEmMassa(ids=[uuid4()], price=Decimal("50"), stock_quantity=7, status="draft")))
-    texto = sql(db.query)
-    assert "price=50" in texto and "stock_quantity=7" in texto and "status='draft'" in texto
+    a = peca(stock_quantity=7)
+    db = SessaoEdicao([a])
+    run(svc.editar_em_massa(db, uuid4(), EdicaoEmMassa(ids=[a.id], price=Decimal("50"), stock_quantity=7, status="draft")))
+    assert a.price == Decimal("50") and a.status == "draft"
+    assert db.adicionados == []  # estoque igual: nada no histórico
 
 
 @pytest.mark.parametrize(

@@ -26,6 +26,7 @@ from model.look import Look
 from model.orders import Order, OrderStatus, PaymentMethod, PaymentStatus
 from model.orders_items import OrderItems
 from schemas.order import CheckoutRequest, CheckoutResponse, OrderItemOut, OrderOut
+from service import inventory_service
 from service import mercadopago_service as mp
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,11 @@ async def checkout(db: AsyncSession, user_id: UUID, dados: CheckoutRequest) -> C
             raise HTTPException(status_code=400, detail=f'"{look.name}" está sem preço e não pode ser comprado.')
         if look.status != "active":
             raise HTTPException(status_code=400, detail=f'"{look.name}" não está mais disponível.')
-        if look.stock_quantity < item.quantity:
-            restam = max(look.stock_quantity, 0)
+        # Unidades reservadas pela loja (ex.: separadas para alguém no Instagram)
+        # continuam no estoque, mas não estão à venda no app.
+        disponivel = max((look.stock_quantity or 0) - (look.reserved_quantity or 0), 0)
+        if disponivel < item.quantity:
+            restam = disponivel
             raise HTTPException(
                 status_code=400,
                 detail=f'Estoque insuficiente para "{look.name}" (restam {restam}).',
@@ -161,6 +165,21 @@ async def obter(db: AsyncSession, user_id: UUID, order_id: UUID) -> OrderOut:
     return _para_saida(pedido)
 
 
+async def _registrar_venda_no_historico(db: AsyncSession, look: Look, item: OrderItems, order_id: UUID) -> None:
+    """Linha `venda_app` no histórico de estoque da loja. Num SAVEPOINT e sem
+    deixar o erro subir: o histórico nunca pode impedir um pagamento aprovado de
+    ser registrado (a baixa de estoque e o pedido pago são o que importa)."""
+    try:
+        async with db.begin_nested():
+            db.add(
+                inventory_service.novo_movimento(
+                    look, "venda_app", -item.quantity, unit_price=item.unit_price, order_id=order_id
+                )
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("Não foi possível registrar a venda do pedido %s no histórico de estoque", order_id, exc_info=True)
+
+
 _METODO = {
     "credit_card": PaymentMethod.CREDIT_CARD,
     "debit_card": PaymentMethod.DEBIT_CARD,
@@ -205,6 +224,8 @@ async def processar_notificacao(db: AsyncSession, payment_id: str) -> None:
             look = await db.get(Look, item.look_id, with_for_update=True)
             if look is not None:
                 look.stock_quantity = max((look.stock_quantity or 0) - item.quantity, 0)
+                look.reserved_quantity = min(look.reserved_quantity or 0, look.stock_quantity)
+                await _registrar_venda_no_historico(db, look, item, pedido.id)
         cart = (await db.execute(select(Cart).where(Cart.user_id == pedido.user_id))).scalar_one_or_none()
         if cart:
             comprados = [i.look_id for i in pedido.items]

@@ -89,7 +89,7 @@ def test_checkout_carrinho_vazio_400():
 
 def _look(**kw):
     base = dict(id=uuid4(), name="Jaqueta", price=Decimal("159.00"), status="active",
-                stock_quantity=5, photos=["https://x/foto.jpg"])
+                stock_quantity=5, reserved_quantity=0, photos=["https://x/foto.jpg"])
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -128,15 +128,17 @@ def _pedido(total="318.00", pago=False):
         payment_status=PaymentStatus.APPROVED if pago else PaymentStatus.PENDING,
         status=OrderStatus.PAID if pago else OrderStatus.PENDING,
         payment_method=PaymentMethod.PIX, transaction_id="pref:X",
-        items=[SimpleNamespace(look_id=uuid4(), quantity=2)],
+        items=[SimpleNamespace(look_id=uuid4(), quantity=2, unit_price=Decimal("159.00"))],
     )
 
 
 def test_pagamento_aprovado_marca_pago_baixa_estoque_e_limpa_carrinho():
     pedido = _pedido()
-    look = SimpleNamespace(stock_quantity=5)
+    look = SimpleNamespace(id=uuid4(), seller_id=uuid4(), name="Jaqueta", stock_quantity=5,
+                           reserved_quantity=4, cost_price=None)
     db = _sessao(_Resultado(um=pedido), _Resultado(um=SimpleNamespace(id=uuid4())), MagicMock())
     db.get = AsyncMock(return_value=look)
+    db.begin_nested = MagicMock(return_value=_Savepoint())
     pagamento = {"status": "approved", "external_reference": str(pedido.id),
                  "transaction_amount": 318.0, "payment_type_id": "credit_card"}
     with patch.object(mp, "buscar_pagamento", AsyncMock(return_value=pagamento)):
@@ -146,8 +148,49 @@ def test_pagamento_aprovado_marca_pago_baixa_estoque_e_limpa_carrinho():
     assert pedido.payment_method == PaymentMethod.CREDIT_CARD
     assert pedido.transaction_id == "999"
     assert look.stock_quantity == 3
+    assert look.reserved_quantity == 3  # reserva nunca passa do estoque
+    mov = next(o for o in (c.args[0] for c in db.add.call_args_list) if type(o).__name__ == "StockMovement")
+    assert mov.kind == "venda_app" and mov.quantity == -2 and mov.order_id == pedido.id
+    assert mov.stock_after == 3 and mov.unit_price == Decimal("159.00")
     assert db.execute.await_count == 3  # pedido, carrinho, delete dos itens
     db.commit.assert_awaited()
+
+
+class _Savepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _SavepointQueFalha(_Savepoint):
+    async def __aexit__(self, *exc):
+        raise RuntimeError("relation stock_movements does not exist")
+
+
+def test_historico_falhando_nao_impede_o_pagamento():
+    """Se gravar no histórico de estoque falhar, o pedido ainda é marcado pago."""
+    pedido = _pedido()
+    look = SimpleNamespace(id=uuid4(), seller_id=uuid4(), name="Jaqueta", stock_quantity=5,
+                           reserved_quantity=0, cost_price=None)
+    db = _sessao(_Resultado(um=pedido), _Resultado(um=None))
+    db.get = AsyncMock(return_value=look)
+    db.begin_nested = MagicMock(return_value=_SavepointQueFalha())
+    pagamento = {"status": "approved", "external_reference": str(pedido.id), "transaction_amount": 318.0}
+    with patch.object(mp, "buscar_pagamento", AsyncMock(return_value=pagamento)):
+        run(order_service.processar_notificacao(db, "999"))
+    assert pedido.payment_status == PaymentStatus.APPROVED
+    assert look.stock_quantity == 3
+    db.commit.assert_awaited()
+
+
+def test_checkout_respeita_reserva_da_loja():
+    cart = SimpleNamespace(id=uuid4())
+    db = _sessao(_Resultado(um=cart), _Resultado(todos=[(SimpleNamespace(quantity=1), _look(stock_quantity=2, reserved_quantity=2))]))
+    with pytest.raises(HTTPException) as e:
+        run(order_service.checkout(db, uuid4(), CheckoutRequest(address=ENDERECO)))
+    assert e.value.status_code == 400 and "restam 0" in e.value.detail
 
 
 def test_notificacao_repetida_nao_baixa_estoque_de_novo():

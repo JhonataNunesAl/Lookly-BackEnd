@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
         from db.database import engine
         from core.schema_guard import garantir_schema
 
-        await asyncio.wait_for(garantir_schema(engine), timeout=15)
+        await asyncio.wait_for(garantir_schema(engine), timeout=40)
     except Exception:  # noqa: BLE001
         logger.exception("Schema guard não pôde rodar (banco indisponível?) — API sobe mesmo assim")
     yield

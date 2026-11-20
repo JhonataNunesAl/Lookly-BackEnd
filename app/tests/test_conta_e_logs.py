@@ -433,9 +433,9 @@ def test_guarda_nao_mexe_na_tabela_quando_a_coluna_existe(monkeypatch):
     monkeypatch.delenv("SCHEMA_GUARD", raising=False)
     conn = FakeConn(coluna_existe=True)
     assert run(schema_guard.garantir_schema(FakeEngine(conn))) is False
-    # uma consulta ao catálogo por coluna vigiada, nenhum DDL
+    # uma leitura do catálogo por passo, nenhum DDL
     assert len(conn.executados) == len(schema_guard.PASSOS)
-    assert all("information_schema" in q for q in conn.executados)
+    assert all("information_schema" in e for e in conn.executados)
     assert conn.commits == 0
 
 
@@ -446,6 +446,8 @@ def test_guarda_cria_coluna_e_indices_quando_falta(monkeypatch):
     ddl = " ".join(conn.executados)
     assert "ADD COLUMN IF NOT EXISTS sizes" in ddl and "idx_looks_sizes" in ddl and "idx_looks_price" in ddl
     assert "ADD COLUMN IF NOT EXISTS sku" in ddl and "uq_looks_seller_sku" in ddl
+    assert "reserved_quantity" in ddl and "fulfillment_status" in ddl and "stock_movements" in ddl
+    assert "lock_timeout" in ddl
     assert conn.commits == len(schema_guard.PASSOS)
 
 

@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from model.look import Look
 from model.category import Category
+from model.orders_items import OrderItems
 from schemas.look import LookCreate, LookUpdate, LookFiltros
-from service import seller_service
+from service import seller_service, inventory_service
 
 
 async def _commit_ou_400(db: AsyncSession) -> None:
@@ -185,8 +186,11 @@ async def create_look(db: AsyncSession, user_id: UUID, dados: LookCreate) -> Loo
         )
     await _validar_categoria(db, dados.category_id)
 
-    look = Look(seller_id=seller.id, **dados.model_dump())
+    look = Look(id=uuid4(), seller_id=seller.id, **dados.model_dump())
     db.add(look)
+    if look.stock_quantity:
+        # O estoque inicial já entra no histórico de movimentações.
+        db.add(inventory_service.novo_movimento(look, "entrada", look.stock_quantity, user_id=user_id, note="Cadastro da peça"))
     await _commit_ou_400(db)
     await db.refresh(look)
     return look
@@ -210,8 +214,18 @@ async def update_look(
     payload = dados.model_dump(exclude_unset=True)
     if "category_id" in payload:
         await _validar_categoria(db, payload["category_id"])
+    estoque_antes = look.stock_quantity or 0
     for campo, valor in payload.items():
         setattr(look, campo, valor)
+    if "stock_quantity" in payload and payload["stock_quantity"] != estoque_antes:
+        # Mudou o estoque pela edição da peça: vira um "ajuste" no histórico, e a
+        # reserva nunca fica maior que o estoque.
+        look.reserved_quantity = min(look.reserved_quantity or 0, look.stock_quantity)
+        db.add(
+            inventory_service.novo_movimento(
+                look, "ajuste", look.stock_quantity - estoque_antes, user_id=user_id, note="Edição da peça"
+            )
+        )
     await _commit_ou_400(db)
     await db.refresh(look)
     return look
@@ -219,6 +233,17 @@ async def update_look(
 
 async def delete_look(db: AsyncSession, user_id: UUID, look_id: UUID) -> None:
     look = await _get_manageable_look(db, user_id, look_id)
+    # order_items.look_id é ON DELETE CASCADE: apagar uma peça vendida apagaria o
+    # item do pedido de quem comprou (e a venda das métricas). Peça com venda no
+    # app só pode ser pausada.
+    vendida = (
+        await db.execute(select(OrderItems.id).where(OrderItems.look_id == look.id).limit(1))
+    ).scalar_one_or_none()
+    if vendida:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Essa peça já tem pedidos no app e não pode ser apagada. Pause a peça para tirá-la do feed.",
+        )
     await db.delete(look)
     await db.commit()
 

@@ -22,12 +22,12 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
-from sqlalchemy import func, or_, update
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -46,7 +46,7 @@ from schemas.importacao import (
     PreviaResponse,
 )
 from schemas.look import TAMANHOS_VALIDOS, normalizar_tamanhos
-from service import seller_service
+from service import inventory_service, seller_service
 
 MAX_BYTES_PLANILHA = 5 * 1024 * 1024
 MAX_LINHAS = 5000
@@ -567,6 +567,7 @@ async def gravar_lote(db: AsyncSession, user_id: UUID, pedido: LoteRequest) -> L
 
     novos: list[Look] = []
     atualizados: list[Look] = []
+    movimentos: list = []
     skus_no_lote: set[str] = set()
     for i, it in itens:
         def falha(msg):
@@ -590,8 +591,17 @@ async def gravar_lote(db: AsyncSession, user_id: UUID, pedido: LoteRequest) -> L
 
         campos = _campos_gravaveis(it)
         if alvo is not None:
+            estoque_antes = alvo.stock_quantity or 0
             for k, v in campos.items():
                 setattr(alvo, k, v)
+            if "stock_quantity" in campos and campos["stock_quantity"] != estoque_antes:
+                # Mesma regra da edição da peça: reserva nunca maior que o estoque,
+                # e a mudança entra no histórico de movimentações.
+                alvo.reserved_quantity = min(alvo.reserved_quantity or 0, alvo.stock_quantity)
+                movimentos.append(inventory_service.novo_movimento(
+                    alvo, "ajuste", alvo.stock_quantity - estoque_antes, user_id=user_id,
+                    note="Importação por planilha",
+                ))
             atualizados.append(alvo)
         else:
             faltando = [rot for k, rot in (("name", "nome"), ("category_id", "categoria"), ("photos", "fotos"))
@@ -614,6 +624,21 @@ async def gravar_lote(db: AsyncSession, user_id: UUID, pedido: LoteRequest) -> L
             look.created_at = agora - timedelta(microseconds=k)
         db.add_all(novos)
         try:
+            await db.flush()  # gera os ids das peças novas (o histórico aponta para elas)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não foi possível salvar este lote (algum código de peça pode já estar em uso). "
+                       "Nada deste lote foi gravado.",
+            )
+        for look in novos:
+            if look.stock_quantity:
+                movimentos.append(inventory_service.novo_movimento(
+                    look, "entrada", look.stock_quantity, user_id=user_id, note="Importação por planilha",
+                ))
+        db.add_all(movimentos)
+        try:
             await db.flush()
             ids_ok = [l.id for l in novos] + [l.id for l in atualizados]
             await db.commit()
@@ -634,9 +659,11 @@ async def gravar_lote(db: AsyncSession, user_id: UUID, pedido: LoteRequest) -> L
 # ── edição em massa ───────────────────────────────────────────────────────────
 
 async def editar_em_massa(db: AsyncSession, user_id: UUID, dados: EdicaoEmMassa) -> EdicaoEmMassaResponse:
-    """Aplica o mesmo ajuste em várias peças da loja numa única consulta.
+    """Aplica o mesmo ajuste em várias peças da loja (até 500), numa transação.
     Só mexe em peças `active`/`draft` da própria loja: as que estão em moderação
-    (`under_review`/`removed`) ou são de outra loja são contadas como ignoradas."""
+    (`under_review`/`removed`) ou são de outra loja são contadas como ignoradas.
+    Mudança de estoque entra no histórico (`stock_movements`, tipo ajuste) e a
+    reserva é cortada se ficar maior que o estoque — a mesma regra da edição."""
     seller = await _loja(db, user_id)
     ids = list(dict.fromkeys(dados.ids))
 
@@ -645,35 +672,40 @@ async def editar_em_massa(db: AsyncSession, user_id: UUID, dados: EdicaoEmMassa)
         if cat.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="Categoria inexistente")
 
-    valores = {}
-    if dados.price is not None:
-        valores[Look.price] = dados.price
+    res = await db.execute(
+        select(Look)
+        .where(Look.seller_id == seller.id, Look.id.in_(ids), Look.status.in_(["active", "draft"]))
+        .with_for_update()
+    )
+    looks = list(res.scalars().all())
+
+    fator = None
     if dados.price_percent is not None:
         fator = (Decimal(100) + dados.price_percent) / Decimal(100)
-        valores[Look.price] = func.round(Look.price * fator, 2)  # NULL continua NULL
-    if dados.stock_quantity is not None:
-        valores[Look.stock_quantity] = dados.stock_quantity
-    if dados.stock_delta is not None:
-        valores[Look.stock_quantity] = func.greatest(Look.stock_quantity + dados.stock_delta, 0)
-    if dados.status is not None:
-        valores[Look.status] = dados.status
-    if dados.category_id is not None:
-        valores[Look.category_id] = dados.category_id
-
-    stmt = (
-        update(Look)
-        .where(Look.seller_id == seller.id, Look.id.in_(ids), Look.status.in_(["active", "draft"]))
-        .values(valores)
-        .execution_options(synchronize_session=False)
-    )
+    for look in looks:
+        if dados.price is not None:
+            look.price = dados.price
+        if fator is not None and look.price is not None:  # sem preço continua sem
+            look.price = (Decimal(look.price) * fator).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if dados.status is not None:
+            look.status = dados.status
+        if dados.category_id is not None:
+            look.category_id = dados.category_id
+        if dados.stock_quantity is not None or dados.stock_delta is not None:
+            antes = look.stock_quantity or 0
+            novo = dados.stock_quantity if dados.stock_quantity is not None else max(antes + dados.stock_delta, 0)
+            if novo != antes:
+                look.stock_quantity = novo
+                look.reserved_quantity = min(look.reserved_quantity or 0, novo)
+                db.add(inventory_service.novo_movimento(
+                    look, "ajuste", novo - antes, user_id=user_id, note="Edição em massa",
+                ))
     try:
-        res = await db.execute(stmt)
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Não foi possível aplicar a alteração — confira os valores.")
-    n = res.rowcount or 0
-    return EdicaoEmMassaResponse(atualizados=n, ignorados=len(ids) - n)
+    return EdicaoEmMassaResponse(atualizados=len(looks), ignorados=len(ids) - len(looks))
 
 
 # ── modelo e exportação ───────────────────────────────────────────────────────
