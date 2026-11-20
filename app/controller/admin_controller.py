@@ -33,7 +33,9 @@ from schemas.admin import (
     UsuariosResponse,
     UsuarioUpdate,
 )
+from schemas.platform_fee import PlatformFeeConfig, PlatformFeeConfigUpdate, RepassePendente
 from service import admin_service as svc
+from service import platform_fee_service
 
 router = APIRouter(prefix="/admin", tags=["Administração"], dependencies=[Depends(require_admin)])
 
@@ -188,3 +190,28 @@ async def denuncias(
 @router.patch("/reports/{report_id}", response_model=DenunciaAdmin)
 async def editar_denuncia(report_id: UUID, dados: DenunciaUpdate, admin_id: UUID = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     return await svc.atualizar_denuncia(db, admin_id, report_id, dados)
+
+
+# ── taxa da plataforma e repasses (regra em service/platform_fee_service.py) ──
+@router.get("/platform-fee", response_model=PlatformFeeConfig)
+async def taxa(db: AsyncSession = Depends(get_db)):
+    return await platform_fee_service.obter_config(db)
+
+
+@router.put("/platform-fee", response_model=PlatformFeeConfig)
+async def mudar_taxa(dados: PlatformFeeConfigUpdate, admin_id: UUID = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Percentual, dias de carência e fim da demo (end_demo_now ou demo_ends_at)."""
+    return await platform_fee_service.atualizar_config(db, dados, admin_id)
+
+
+@router.get("/payouts", response_model=list[RepassePendente])
+async def repasses(db: AsyncSession = Depends(get_db)):
+    """Quanto falta repassar para cada loja (vendas pagas com repasse pendente)."""
+    return await platform_fee_service.repasses_pendentes(db)
+
+
+@router.post("/payouts/{seller_id}/paid")
+async def repasse_feito(seller_id: UUID, admin_id: UUID = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Marca como pago tudo o que estava pendente para a loja."""
+    n = await platform_fee_service.marcar_repasse_pago(db, seller_id, admin_id)
+    return {"items_marked": n}
