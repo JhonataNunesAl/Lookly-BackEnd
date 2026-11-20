@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from schemas.look import LookGestaoResponse
+from schemas.platform_fee import TaxaDaLoja
 
 # ── itens ─────────────────────────────────────────────────────────────────────
 
@@ -115,6 +116,12 @@ class ItemVenda(BaseModel):
     fulfillment_status: str
     tracking_code: str | None = None
     shipped_at: datetime | None = None
+    # Taxa da plataforma (0% na demo) e quanto a loja recebe por esta peça.
+    platform_fee_percent: Decimal = Decimal("0")
+    platform_fee_amount: Decimal = Decimal("0")
+    seller_net_amount: Decimal | None = None
+    fee_rule: str = "demo"  # demo | carencia | padrao
+    payout_status: str = "pending"  # repasse para a loja: pending | paid
 
 
 class VendaApp(BaseModel):
@@ -127,6 +134,8 @@ class VendaApp(BaseModel):
     # Só as peças DESTA loja no pedido, e o total delas.
     items: list[ItemVenda]
     total: Decimal
+    fee_total: Decimal = Decimal("0")
+    net_total: Decimal | None = None
     fulfillment_status: str
 
 
@@ -169,6 +178,10 @@ class Metricas(BaseModel):
     revenue_app: Decimal
     revenue_external: Decimal
     revenue_by_channel: dict[str, Decimal]
+    # Taxa da plataforma: só sobre vendas do app (vendas externas não pagam).
+    platform_fees: Decimal = Decimal("0")
+    net_revenue_app: Decimal = Decimal("0")
+    platform_fee: TaxaDaLoja | None = None
     gross_profit: Decimal | None = None  # só peças com custo informado
     revenue_with_cost: Decimal
     series: list[PontoSerie]

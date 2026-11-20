@@ -59,6 +59,17 @@ class OrderItems(Base):
     shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tracking_code: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Taxa da plataforma, congelada quando o pagamento é aprovado
+    # (service/platform_fee_service.py, sql/taxa_plataforma.sql).
+    # fee_rule: demo | carencia | padrao. NULL = venda ainda não aprovada.
+    platform_fee_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    platform_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    seller_net_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    fee_rule: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Repasse do valor líquido para a loja: pending | paid
+    payout_status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
+    paid_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Relacionamentos
     order = relationship("Order", back_populates="items")
 

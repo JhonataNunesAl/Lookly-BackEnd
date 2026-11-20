@@ -119,6 +119,37 @@ PASSOS: tuple[Passo, ...] = (
         ),
         registro="sql/gestao_estoque.sql",
     ),
+    Passo(
+        nome="taxa da plataforma (platform_fee_config + order_items)",
+        existe=_coluna("order_items", "payout_status"),
+        ddl=(
+            "CREATE TABLE IF NOT EXISTS public.platform_fee_config ("
+            " id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),"
+            " demo_ends_at timestamptz,"
+            " fee_percent numeric(5,2) NOT NULL DEFAULT 11 CHECK (fee_percent >= 0 AND fee_percent <= 50),"
+            " grace_days integer NOT NULL DEFAULT 60 CHECK (grace_days >= 0 AND grace_days <= 730),"
+            " updated_at timestamptz NOT NULL DEFAULT now(),"
+            " updated_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL)",
+            "INSERT INTO public.platform_fee_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+            "ALTER TABLE public.platform_fee_config ENABLE ROW LEVEL SECURITY",
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN "
+            "REVOKE ALL ON public.platform_fee_config FROM anon; END IF; END $$",
+            "ALTER TABLE public.order_items "
+            "ADD COLUMN IF NOT EXISTS platform_fee_percent numeric(5,2), "
+            "ADD COLUMN IF NOT EXISTS platform_fee_amount numeric(10,2), "
+            "ADD COLUMN IF NOT EXISTS seller_net_amount numeric(10,2), "
+            "ADD COLUMN IF NOT EXISTS fee_rule text, "
+            "ADD COLUMN IF NOT EXISTS paid_out_at timestamptz",
+            # Por último: é a coluna que o `existe` confere.
+            "ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS payout_status text NOT NULL DEFAULT 'pending'",
+            # Tudo o que foi vendido até aqui foi na demo: 0%, valor inteiro para a loja.
+            "UPDATE public.order_items oi SET platform_fee_percent = 0, platform_fee_amount = 0, "
+            "seller_net_amount = oi.subtotal, fee_rule = 'demo' FROM public.orders o "
+            "WHERE o.id = oi.order_id AND upper(o.payment_status::text) = 'APPROVED' "
+            "AND oi.platform_fee_percent IS NULL",
+        ),
+        registro="sql/taxa_plataforma.sql",
+    ),
 )
 
 

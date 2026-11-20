@@ -11,6 +11,7 @@ Fluxo:
 """
 
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -27,7 +28,7 @@ from model.orders import Order, OrderStatus, PaymentMethod, PaymentStatus
 from model.orders_items import OrderItems
 from model.seller import Seller
 from schemas.order import CheckoutRequest, CheckoutResponse, OrderItemOut, OrderOut
-from service import inventory_service
+from service import inventory_service, platform_fee_service
 from service import mercadopago_service as mp
 
 logger = logging.getLogger(__name__)
@@ -226,12 +227,16 @@ async def processar_notificacao(db: AsyncSession, payment_id: str) -> None:
         pedido.status = OrderStatus.PAID
         pedido.transaction_id = str(payment_id)
         pedido.payment_method = _METODO.get(pagamento.get("payment_type_id"), pedido.payment_method)
+        vendidos: list[tuple[OrderItems, UUID | None]] = []
         for item in pedido.items:
             look = await db.get(Look, item.look_id, with_for_update=True)
+            vendidos.append((item, look.seller_id if look is not None else None))
             if look is not None:
                 look.stock_quantity = max((look.stock_quantity or 0) - item.quantity, 0)
                 look.reserved_quantity = min(look.reserved_quantity or 0, look.stock_quantity)
                 await _registrar_venda_no_historico(db, look, item, pedido.id)
+        # Taxa da plataforma congelada no momento da venda (0% na demo).
+        await platform_fee_service.congelar_taxas(db, vendidos, datetime.now(timezone.utc))
         cart = (await db.execute(select(Cart).where(Cart.user_id == pedido.user_id))).scalar_one_or_none()
         if cart:
             comprados = [i.look_id for i in pedido.items]
