@@ -119,6 +119,33 @@ PASSOS: tuple[Passo, ...] = (
         ),
         registro="sql/gestao_estoque.sql",
     ),
+    Passo(
+        nome="store_collections (coleções da loja)",
+        existe="SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'store_collection_items'",
+        ddl=(
+            "CREATE TABLE IF NOT EXISTS public.store_collections ("
+            " id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
+            " seller_id uuid NOT NULL REFERENCES public.sellers(id) ON DELETE CASCADE,"
+            " name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),"
+            " description text,"
+            " sort_order integer NOT NULL DEFAULT 0,"
+            " created_at timestamptz NOT NULL DEFAULT now(),"
+            " updated_at timestamptz NOT NULL DEFAULT now(),"
+            " CONSTRAINT uq_store_collections_seller_name UNIQUE (seller_id, name))",
+            "CREATE TABLE IF NOT EXISTS public.store_collection_items ("
+            " collection_id uuid NOT NULL REFERENCES public.store_collections(id) ON DELETE CASCADE,"
+            " look_id uuid NOT NULL REFERENCES public.looks(id) ON DELETE CASCADE,"
+            " added_at timestamptz NOT NULL DEFAULT now(),"
+            " PRIMARY KEY (collection_id, look_id))",
+            "CREATE INDEX IF NOT EXISTS idx_store_collection_items_look ON public.store_collection_items (look_id)",
+            "ALTER TABLE public.store_collections ENABLE ROW LEVEL SECURITY",
+            "ALTER TABLE public.store_collection_items ENABLE ROW LEVEL SECURITY",
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN "
+            "REVOKE ALL ON public.store_collections FROM anon; "
+            "REVOKE ALL ON public.store_collection_items FROM anon; END IF; END $$",
+        ),
+        registro="sql/gestao_estoque.sql",
+    ),
 )
 
 
