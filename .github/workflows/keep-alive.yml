@@ -1,0 +1,27 @@
+# Mantém o backend no Render (plano grátis) acordado.
+# O Render grátis "dorme" após 15 min sem acesso; este job chama a API a cada 10 min.
+# Rota usada: GET / (não toca no banco).
+name: Keep backend awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping backend
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 90 https://lookly-backend-2.onrender.com/ || true)
+            echo "Tentativa $i: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 20
+          done
+          echo "Backend não respondeu 200"
+          exit 1
