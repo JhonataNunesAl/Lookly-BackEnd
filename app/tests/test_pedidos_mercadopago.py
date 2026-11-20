@@ -128,7 +128,9 @@ def _pedido(total="318.00", pago=False):
         payment_status=PaymentStatus.APPROVED if pago else PaymentStatus.PENDING,
         status=OrderStatus.PAID if pago else OrderStatus.PENDING,
         payment_method=PaymentMethod.PIX, transaction_id="pref:X",
-        items=[SimpleNamespace(look_id=uuid4(), quantity=2, unit_price=Decimal("159.00"))],
+        items=[SimpleNamespace(look_id=uuid4(), quantity=2, unit_price=Decimal("159.00"), subtotal=Decimal("318.00"),
+                               platform_fee_percent=None, platform_fee_amount=None, seller_net_amount=None, fee_rule=None,
+                               mp_fee_amount=None)],
     )
 
 
@@ -136,11 +138,13 @@ def test_pagamento_aprovado_marca_pago_baixa_estoque_e_limpa_carrinho():
     pedido = _pedido()
     look = SimpleNamespace(id=uuid4(), seller_id=uuid4(), name="Jaqueta", stock_quantity=5,
                            reserved_quantity=4, cost_price=None)
-    db = _sessao(_Resultado(um=pedido), _Resultado(um=SimpleNamespace(id=uuid4())), MagicMock())
-    db.get = AsyncMock(return_value=look)
-    db.begin_nested = MagicMock(return_value=_Savepoint())
+    # pedido, config da taxa (sem linha = demo), carrinho, delete dos itens
+    db = _sessao(_Resultado(um=pedido), _Resultado(um=None), _Resultado(um=SimpleNamespace(id=uuid4())), MagicMock())
+    db.get = AsyncMock(side_effect=lambda cls, *a, **k: look if cls.__name__ == "Look" else SimpleNamespace(created_at=None))
+    db.begin_nested = MagicMock(side_effect=lambda: _Savepoint())
     pagamento = {"status": "approved", "external_reference": str(pedido.id),
-                 "transaction_amount": 318.0, "payment_type_id": "credit_card"}
+                 "transaction_amount": 318.0, "payment_type_id": "credit_card",
+                 "fee_details": [{"type": "mercadopago_fee", "amount": 15.84, "fee_payer": "collector"}]}
     with patch.object(mp, "buscar_pagamento", AsyncMock(return_value=pagamento)):
         run(order_service.processar_notificacao(db, "999"))
     assert pedido.payment_status == PaymentStatus.APPROVED
@@ -152,7 +156,12 @@ def test_pagamento_aprovado_marca_pago_baixa_estoque_e_limpa_carrinho():
     mov = next(o for o in (c.args[0] for c in db.add.call_args_list) if type(o).__name__ == "StockMovement")
     assert mov.kind == "venda_app" and mov.quantity == -2 and mov.order_id == pedido.id
     assert mov.stock_after == 3 and mov.unit_price == Decimal("159.00")
-    assert db.execute.await_count == 3  # pedido, carrinho, delete dos itens
+    assert db.execute.await_count == 4  # pedido, config da taxa, carrinho, delete dos itens
+    item = pedido.items[0]
+    assert item.platform_fee_percent == 0 and item.platform_fee_amount == 0
+    # demo: 0% de taxa Lookly, mas a tarifa do MP sai do repasse
+    assert pedido.mp_fee_amount == Decimal("15.84") and item.mp_fee_amount == Decimal("15.84")
+    assert item.seller_net_amount == Decimal("302.16") and item.fee_rule == "demo"
     db.commit.assert_awaited()
 
 
@@ -174,9 +183,9 @@ def test_historico_falhando_nao_impede_o_pagamento():
     pedido = _pedido()
     look = SimpleNamespace(id=uuid4(), seller_id=uuid4(), name="Jaqueta", stock_quantity=5,
                            reserved_quantity=0, cost_price=None)
-    db = _sessao(_Resultado(um=pedido), _Resultado(um=None))
+    db = _sessao(_Resultado(um=pedido), _Resultado(um=None), _Resultado(um=None))
     db.get = AsyncMock(return_value=look)
-    db.begin_nested = MagicMock(return_value=_SavepointQueFalha())
+    db.begin_nested = MagicMock(side_effect=lambda: _SavepointQueFalha())
     pagamento = {"status": "approved", "external_reference": str(pedido.id), "transaction_amount": 318.0}
     with patch.object(mp, "buscar_pagamento", AsyncMock(return_value=pagamento)):
         run(order_service.processar_notificacao(db, "999"))
@@ -242,3 +251,11 @@ def test_rota_webhook_le_corpo_e_query(monkeypatch):
         assert [call.args[1] for call in proc.await_args_list] == ["42", "43"]
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_tarifa_do_pagamento():
+    assert mp.tarifa_do_pagamento({"fee_details": [
+        {"amount": 4.98, "fee_payer": "collector"}, {"amount": 2.0, "fee_payer": "payer"}]}) == Decimal("4.98")
+    assert mp.tarifa_do_pagamento({"transaction_amount": 100,
+                                   "transaction_details": {"net_received_amount": 99.01}}) == Decimal("0.99")
+    assert mp.tarifa_do_pagamento({"transaction_amount": 100}) is None

@@ -28,7 +28,8 @@ from schemas.inventory import (
     VendasResponse,
 )
 from schemas.look import LookGestaoResponse
-from service import collection_service, inventory_service
+from schemas.platform_fee import TaxaDaLoja
+from service import collection_service, inventory_service, platform_fee_service
 
 router = APIRouter(prefix="/inventory", tags=["Gestão de estoque"])
 
@@ -127,72 +128,5 @@ async def metricas(
     return await inventory_service.metricas(db, user_id, days)
 
 
-# ── coleções da loja ──────────────────────────────────────────────────────────
-
-@router.get("/collections", response_model=list[ColecaoOut])
-async def listar_colecoes(user_id: UUID = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
-    return await collection_service.listar(db, user_id)
-
-
-@router.post("/collections", response_model=ColecaoOut, status_code=201)
-@limiter.limit("30/minute")
-async def criar_colecao(
-    request: Request,
-    dados: ColecaoCreate,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    return await collection_service.criar(db, user_id, dados)
-
-
-@router.patch("/collections/{collection_id}", response_model=ColecaoOut)
-async def atualizar_colecao(
-    collection_id: UUID,
-    dados: ColecaoUpdate,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    return await collection_service.atualizar(db, user_id, collection_id, dados)
-
-
-@router.delete("/collections/{collection_id}", status_code=204)
-async def apagar_colecao(
-    collection_id: UUID,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Apaga só a coleção; as peças continuam no estoque."""
-    await collection_service.apagar(db, user_id, collection_id)
-
-
-@router.post("/collections/{collection_id}/items")
-async def adicionar_pecas(
-    collection_id: UUID,
-    dados: ColecaoPecas,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    n = await collection_service.adicionar_pecas(db, user_id, collection_id, dados.look_ids)
-    return {"added": n}
-
-
-@router.delete("/collections/{collection_id}/items/{look_id}", status_code=204)
-async def remover_peca(
-    collection_id: UUID,
-    look_id: UUID,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    await collection_service.remover_peca(db, user_id, collection_id, look_id)
-
-
-@router.put("/items/{look_id}/collections")
-async def definir_colecoes_da_peca(
-    look_id: UUID,
-    dados: ColecoesDaPeca,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Em quais coleções a peça está (a lista enviada substitui a anterior)."""
-    ids = await collection_service.definir_colecoes_da_peca(db, user_id, look_id, dados.collection_ids)
-    return {"collection_ids": ids}
+from schemas.platform_fee import TaxaDaLoja
+from service import collection_service, inventory_service, platform_fee_service

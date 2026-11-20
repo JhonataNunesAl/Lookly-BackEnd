@@ -149,7 +149,7 @@ class _ConnPassoQuebrado:
     async def execute(self, stmt):
         sql = str(stmt)
         self.executados.append(sql)
-        if "order_items ADD COLUMN" in sql:
+        if "fulfillment_status" in sql:  # só o passo do envio por item
             raise RuntimeError("canceling statement due to lock timeout")
         return SimpleNamespace(first=lambda: None)
 

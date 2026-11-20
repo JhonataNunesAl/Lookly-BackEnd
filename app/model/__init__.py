@@ -15,6 +15,7 @@ from .orders_items import OrderItems
 from .address import Address
 from .stock_movement import StockMovement
 from .store_collection import StoreCollection, StoreCollectionItem
+from .platform_fee import PlatformFeeConfig
 
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "Report",
     "Order",
     "OrderItems",
+    "PlatformFeeConfig",
     "SavedLook",
     "StockMovement",
     "StoreCollection",
