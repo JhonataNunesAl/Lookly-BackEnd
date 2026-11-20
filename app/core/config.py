@@ -38,6 +38,17 @@ class Settings:
     # É criado sob demanda no primeiro upload — ver service/storage_service.py.
     STORAGE_BUCKET: str = os.getenv("STORAGE_BUCKET", "lookly-media")
 
+    # Mercado Pago (Checkout Pro). Access Token é SEGREDO de servidor: nunca vai ao
+    # app nem a log. Sem ele, POST /orders/checkout responde 503 em vez de quebrar o boot.
+    MERCADOPAGO_ACCESS_TOKEN: str = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
+    # Segredo da assinatura do webhook (painel MP > Webhooks). Opcional: sem ele o
+    # webhook ainda é seguro porque o status é sempre relido na API do Mercado Pago.
+    MERCADOPAGO_WEBHOOK_SECRET: str = os.getenv("MERCADOPAGO_WEBHOOK_SECRET", "")
+    # Para onde o Mercado Pago devolve a pessoa depois de pagar, e a URL pública
+    # desta API (o MP chama {PUBLIC_API_URL}/api/payments/webhook).
+    PUBLIC_SITE_URL: str = os.getenv("PUBLIC_SITE_URL", "https://lookerstyle.lookerstyle.workers.dev").rstrip("/")
+    PUBLIC_API_URL: str = os.getenv("PUBLIC_API_URL", "https://lookly-backend-2.onrender.com").rstrip("/")
+
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL is not set in the environment variables.")
 

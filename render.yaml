@@ -17,3 +17,11 @@ services:
         sync: false
       - key: CORS_ORIGINS
         value: "*"
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: MERCADOPAGO_WEBHOOK_SECRET
+        sync: false
+      - key: PUBLIC_SITE_URL
+        value: https://lookerstyle.lookerstyle.workers.dev
+      - key: PUBLIC_API_URL
+        value: https://lookly-backend-2.onrender.com
