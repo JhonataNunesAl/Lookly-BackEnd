@@ -169,3 +169,29 @@ def test_guarda_segue_quando_um_passo_falha(monkeypatch):
     assert run(schema_guard.garantir_schema(_Engine())) is True
     assert conn.commits == len(schema_guard.PASSOS) - 1
     assert any("CREATE TABLE IF NOT EXISTS public.stock_movements" in s for s in conn.executados)
+
+
+# ── coleções da loja ──────────────────────────────────────────────────────────
+
+def test_nome_da_colecao_normaliza_espacos():
+    from service import collection_service
+
+    assert collection_service._nome("  Roupas   sessão de carnaval ") == "Roupas sessão de carnaval"
+    with pytest.raises(HTTPException):
+        collection_service._nome("   ")
+
+
+def test_payload_de_colecao():
+    from schemas.inventory import ColecaoCreate, ColecaoPecas
+
+    with pytest.raises(ValidationError):
+        ColecaoCreate(name="")
+    with pytest.raises(ValidationError):
+        ColecaoCreate(name="x" * 61)
+    with pytest.raises(ValidationError):
+        ColecaoPecas(look_ids=[])
+
+
+def test_guarda_cria_tabelas_de_colecao(monkeypatch):
+    ddl = " ".join(d for p in schema_guard.PASSOS for d in p.ddl)
+    assert "store_collections" in ddl and "store_collection_items" in ddl

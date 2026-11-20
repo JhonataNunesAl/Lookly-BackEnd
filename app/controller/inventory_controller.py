@@ -11,6 +11,11 @@ from core.rate_limiter import limiter
 from db.database import get_db
 from dependencies.auth import get_current_user_id
 from schemas.inventory import (
+    ColecaoCreate,
+    ColecaoOut,
+    ColecaoPecas,
+    ColecaoUpdate,
+    ColecoesDaPeca,
     EnvioUpdate,
     ItensEstoqueResponse,
     Metricas,
@@ -24,7 +29,7 @@ from schemas.inventory import (
 )
 from schemas.look import LookGestaoResponse
 from schemas.platform_fee import TaxaDaLoja
-from service import inventory_service, platform_fee_service
+from service import collection_service, inventory_service, platform_fee_service
 
 router = APIRouter(prefix="/inventory", tags=["Gestão de estoque"])
 
@@ -36,6 +41,7 @@ async def listar_itens(
     q: str | None = Query(None, min_length=1, max_length=80, description="nome, descrição ou marca"),
     situacao: Situacao = Query("todos"),
     category_id: UUID | None = Query(None),
+    collection_id: UUID | None = Query(None, description="só peças desta coleção da loja"),
     sort: OrdemItens = Query("recentes"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -43,7 +49,8 @@ async def listar_itens(
     db: AsyncSession = Depends(get_db),
 ):
     return await inventory_service.listar_itens(
-        db, user_id, q=q, situacao=situacao, category_id=category_id, sort=sort, limit=limit, offset=offset
+        db, user_id, q=q, situacao=situacao, category_id=category_id, collection_id=collection_id,
+        sort=sort, limit=limit, offset=offset,
     )
 
 
@@ -121,13 +128,5 @@ async def metricas(
     return await inventory_service.metricas(db, user_id, days)
 
 
-@router.get("/platform-fee", response_model=TaxaDaLoja)
-@limiter.limit("60/minute")
-async def taxa_da_plataforma(
-    request: Request,
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Taxa da plataforma desta loja hoje (0% na demo) e quando ela muda."""
-    seller = await inventory_service.minha_loja(db, user_id)
-    return await platform_fee_service.taxa_da_minha_loja(db, seller)
+from schemas.platform_fee import TaxaDaLoja
+from service import collection_service, inventory_service, platform_fee_service
