@@ -96,15 +96,17 @@ async def _get_cart_item(
 def _checar_estoque(look: Look, quantidade_total: int) -> None:
     """400 quando a quantidade pedida (já somada ao que há no carrinho) passa do
     estoque. Mensagens em português porque o app as mostra ao usuário."""
-    if look.stock_quantity <= 0:
+    # Reservado pela loja não está à venda no app.
+    disponivel = (look.stock_quantity or 0) - (getattr(look, "reserved_quantity", 0) or 0)
+    if disponivel <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sem estoque disponível",
         )
-    if quantidade_total > look.stock_quantity:
+    if quantidade_total > disponivel:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Estoque insuficiente (restam {look.stock_quantity})",
+            detail=f"Estoque insuficiente (restam {disponivel})",
         )
 
 

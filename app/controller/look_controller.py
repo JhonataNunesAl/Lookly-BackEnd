@@ -7,14 +7,17 @@ from dependencies.auth import get_current_user_id, get_current_user_id_optional
 from decimal import Decimal
 from pydantic import ValidationError
 from fastapi import HTTPException
-from schemas.look import LookCreate, LookUpdate, LookResponse, FeedResponse, LookFiltros, OrdemBusca
+from schemas.look import (
+    LookCreate, LookUpdate, LookResponse, FeedResponse, LookFiltros, OrdemBusca,
+    LookGestaoResponse, FeedGestaoResponse,
+)
 from service import look_service
 from core.rate_limiter import limiter
 
 router = APIRouter(prefix="/looks", tags=["Looks"])
 
 
-@router.post("", response_model=LookResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=LookGestaoResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def criar_look(
     request: Request,
@@ -56,7 +59,7 @@ async def buscar_looks(
 
 
 # Precisa vir ANTES de `/{look_id}` pelo mesmo motivo de `/search`.
-@router.get("/mine", response_model=FeedResponse)
+@router.get("/mine", response_model=FeedGestaoResponse)
 @limiter.limit("30/minute")
 async def meus_looks(
     request: Request,
@@ -77,7 +80,7 @@ async def get_look(
     return await look_service.get_look(db, look_id, user_id)
 
 
-@router.put("/{look_id}", response_model=LookResponse)
+@router.put("/{look_id}", response_model=LookGestaoResponse)
 async def atualizar_look(
     look_id: UUID,
     dados: LookUpdate,

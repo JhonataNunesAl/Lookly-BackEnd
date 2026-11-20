@@ -14,6 +14,7 @@ from controller import (
     upload_controller,
     log_controller,
     order_controller,
+    inventory_controller,
 )
 
 router = APIRouter()
@@ -32,3 +33,4 @@ router.include_router(cart_items_controller.router)
 router.include_router(upload_controller.router)
 router.include_router(log_controller.router)
 router.include_router(order_controller.router)
+router.include_router(inventory_controller.router)
