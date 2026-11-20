@@ -67,9 +67,33 @@ def test_divisao_em_centavos():
 
 def _item(**kw):
     base = dict(subtotal=Decimal("200.00"), platform_fee_percent=None, platform_fee_amount=None,
-                seller_net_amount=None, fee_rule=None)
+                seller_net_amount=None, fee_rule=None, mp_fee_amount=None)
     base.update(kw)
     return SimpleNamespace(**base)
+
+
+def test_ratear_tarifa_bate_ao_centavo():
+    assert svc.ratear(Decimal("10.00"), [Decimal("100"), Decimal("100"), Decimal("100")]) == [
+        Decimal("3.33"), Decimal("3.33"), Decimal("3.34")]
+    assert svc.ratear(Decimal("4.98"), [Decimal("0")]) == [Decimal("4.98")]
+    assert svc.ratear(Decimal("1"), []) == []
+
+
+def test_demo_desconta_so_a_tarifa_do_mp():
+    """Pedido de R$ 300 com 2 peças, MP cobrou R$ 14,94: a loja recebe 300 - 14,94."""
+    db = _db(None)  # sem config = demo
+    db.get = AsyncMock(return_value=SimpleNamespace(created_at=None))
+    a, b = _item(subtotal=Decimal("200.00")), _item(subtotal=Decimal("100.00"))
+    run(svc.congelar_taxas(db, [(a, uuid4()), (b, uuid4())], datetime.now(UTC), Decimal("14.94")))
+    assert a.platform_fee_amount == 0 and b.platform_fee_amount == 0
+    assert a.mp_fee_amount == Decimal("9.96") and b.mp_fee_amount == Decimal("4.98")
+    assert a.seller_net_amount + b.seller_net_amount == Decimal("285.06")
+
+
+def test_depois_da_carencia_desconta_taxa_e_tarifa():
+    item = _item(subtotal=Decimal("100.00"))
+    svc.aplicar_no_item(item, REGRA, None, FIM_DEMO + timedelta(days=90), Decimal("4.98"))
+    assert item.platform_fee_amount == Decimal("11.00") and item.seller_net_amount == Decimal("84.02")
 
 
 def test_aplicar_no_item_congela_a_taxa():
@@ -83,12 +107,13 @@ def test_aplicar_no_item_congela_a_taxa():
 def test_taxa_gravada_vence_a_regra_atual():
     item = _item(platform_fee_percent=Decimal("0"), platform_fee_amount=Decimal("0"),
                  seller_net_amount=Decimal("200.00"), fee_rule="demo")
-    assert svc.taxa_do_item(item, REGRA, None, datetime(2030, 1, 1)) == (0, 0, Decimal("200.00"), "demo")
+    t = svc.taxa_do_item(item, REGRA, None, datetime(2030, 1, 1))
+    assert (t.percent, t.taxa, t.liquido, t.fase) == (0, 0, Decimal("200.00"), "demo")
 
 
 def test_sem_taxa_gravada_usa_a_regra_na_data_do_pedido():
-    pct, taxa, liquido, fase = svc.taxa_do_item(_item(), REGRA, None, datetime(2030, 1, 1))
-    assert (pct, taxa, liquido, fase) == (Decimal("11"), Decimal("22.00"), Decimal("178.00"), "padrao")
+    t = svc.taxa_do_item(_item(), REGRA, None, datetime(2030, 1, 1))
+    assert (t.percent, t.taxa, t.liquido, t.fase) == (Decimal("11"), Decimal("22.00"), Decimal("178.00"), "padrao")
 
 
 class _Savepoint:
@@ -175,7 +200,7 @@ def test_atualizacao_invalida(dados):
 def test_mensagem_da_loja_por_fase():
     loja = datetime(2026, 11, 1, tzinfo=UTC)
     demo = svc.taxa_da_loja(svc.REGRA_PADRAO, loja)
-    assert demo["phase"] == "demo" and demo["current_percent"] == 0 and "valor inteiro" in demo["message"]
+    assert demo["phase"] == "demo" and demo["current_percent"] == 0 and "tarifa do Mercado Pago" in demo["message"]
     car = svc.taxa_da_loja(REGRA, loja, FIM_DEMO + timedelta(days=1))
     assert car["phase"] == "carencia" and "01/04/2027" in car["message"]
     pad = svc.taxa_da_loja(REGRA, loja, FIM_DEMO + timedelta(days=61))

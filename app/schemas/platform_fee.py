@@ -54,5 +54,6 @@ class RepassePendente(BaseModel):
     store_name: str
     items: int
     gross: Decimal
-    fees: Decimal
+    fees: Decimal  # taxa da plataforma
+    mp_fees: Decimal  # tarifa do Mercado Pago (já descontada do líquido)
     net: Decimal

@@ -66,6 +66,9 @@ class OrderItems(Base):
     platform_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     seller_net_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     fee_rule: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Parte desta peça na tarifa que o Mercado Pago cobrou do pagamento (rateada
+    # pelo subtotal). Sai do repasse: a plataforma não absorve a tarifa do MP.
+    mp_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     # Repasse do valor líquido para a loja: pending | paid
     payout_status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     paid_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

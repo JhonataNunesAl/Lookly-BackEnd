@@ -139,7 +139,9 @@ PASSOS: tuple[Passo, ...] = (
             "ADD COLUMN IF NOT EXISTS platform_fee_amount numeric(10,2), "
             "ADD COLUMN IF NOT EXISTS seller_net_amount numeric(10,2), "
             "ADD COLUMN IF NOT EXISTS fee_rule text, "
+            "ADD COLUMN IF NOT EXISTS mp_fee_amount numeric(10,2), "
             "ADD COLUMN IF NOT EXISTS paid_out_at timestamptz",
+            "ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS mp_fee_amount numeric(10,2)",
             # Por último: é a coluna que o `existe` confere.
             "ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS payout_status text NOT NULL DEFAULT 'pending'",
             # Tudo o que foi vendido até aqui foi na demo: 0%, valor inteiro para a loja.

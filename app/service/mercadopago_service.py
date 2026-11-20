@@ -97,6 +97,25 @@ async def buscar_pagamento(payment_id: str) -> dict:
     return r.json()
 
 
+def tarifa_do_pagamento(pagamento: dict) -> Decimal | None:
+    """Quanto o Mercado Pago cobrou de NÓS (o recebedor) neste pagamento.
+
+    Soma `fee_details` com fee_payer = collector; sem esse campo, usa
+    transaction_amount - net_received_amount. None quando o MP não informou."""
+    detalhes = pagamento.get("fee_details")
+    if detalhes:
+        total = sum(
+            (Decimal(str(d.get("amount") or 0)) for d in detalhes if d.get("fee_payer", "collector") == "collector"),
+            Decimal("0"),
+        )
+        return total.quantize(Decimal("0.01"))
+    bruto = pagamento.get("transaction_amount")
+    liquido = (pagamento.get("transaction_details") or {}).get("net_received_amount")
+    if bruto is None or liquido is None:
+        return None
+    return max(Decimal(str(bruto)) - Decimal(str(liquido)), Decimal("0")).quantize(Decimal("0.01"))
+
+
 def assinatura_valida(x_signature: str | None, x_request_id: str | None, data_id: str) -> bool:
     """Confere o cabeçalho x-signature do webhook (HMAC-SHA256 do manifesto
     `id:{data.id};request-id:{x-request-id};ts:{ts};`). Sem segredo configurado,

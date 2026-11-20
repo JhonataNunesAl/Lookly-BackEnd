@@ -235,8 +235,11 @@ async def processar_notificacao(db: AsyncSession, payment_id: str) -> None:
                 look.stock_quantity = max((look.stock_quantity or 0) - item.quantity, 0)
                 look.reserved_quantity = min(look.reserved_quantity or 0, look.stock_quantity)
                 await _registrar_venda_no_historico(db, look, item, pedido.id)
-        # Taxa da plataforma congelada no momento da venda (0% na demo).
-        await platform_fee_service.congelar_taxas(db, vendidos, datetime.now(timezone.utc))
+        # Taxa da plataforma congelada no momento da venda (0% na demo) e a
+        # tarifa do Mercado Pago rateada pelas peças: as duas saem do repasse.
+        tarifa_mp = mp.tarifa_do_pagamento(pagamento)
+        pedido.mp_fee_amount = tarifa_mp
+        await platform_fee_service.congelar_taxas(db, vendidos, datetime.now(timezone.utc), tarifa_mp)
         cart = (await db.execute(select(Cart).where(Cart.user_id == pedido.user_id))).scalar_one_or_none()
         if cart:
             comprados = [i.look_id for i in pedido.items]

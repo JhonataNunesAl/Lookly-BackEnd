@@ -45,6 +45,8 @@ class Order(Base):
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     shipping_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    # Tarifa que o Mercado Pago cobrou deste pagamento (fee_details), lida na aprovação.
+    mp_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     shipping_address: Mapped[dict] = mapped_column(JSONB, nullable=False)    
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default= func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
